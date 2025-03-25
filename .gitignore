@@ -35,3 +35,6 @@ logs/
 node_modules/
 data/users.db-wal
 data/users.db-shm
+# SQLite WAL dosyaları
+*.db-shm
+*.db-wal
