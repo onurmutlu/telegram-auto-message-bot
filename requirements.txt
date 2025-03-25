@@ -1,0 +1,8 @@
+telethon>=1.25.4
+python-dotenv>=0.19.2
+colorama>=0.4.4
+# keyboard kütüphanesini kaldırdık
+# asyncio zaten Python'un bir parçası, ayrıca yüklenmesi gerekmez
+# typing zaten Python'un bir parçası, ayrıca yüklenmesi gerekmez
+# pathlib zaten Python 3.4+ sürümlerinde mevcut
+# sqlite3 zaten Python'un bir parçası, ayrıca yüklenmesi gerekmez

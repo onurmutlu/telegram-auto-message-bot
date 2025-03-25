@@ -1,0 +1,35 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ortam
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Veritabanı
+*.db
+*.sqlite
+*.sqlite3
+
+# Telegram oturum dosyaları
+session/
+*.session
+*.session-journal
+
+# Log dosyaları
+logs/
+*.log
+
+# IDE dosyaları
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Diğer
+.DS_Store
+node_modules/
