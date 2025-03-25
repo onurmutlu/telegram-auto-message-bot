@@ -176,6 +176,7 @@ class BaseBot:
             's': {'desc': 'Durum Göster', 'func': self.show_status},
             'h': {'desc': 'Yardım', 'func': self.show_help},
             'c': {'desc': 'Konsolu Temizle', 'func': self.clear_console},
+            'd': {'desc': 'Debug Modu Aç/Kapat', 'func': self.toggle_debug},
         }
         
         self.show_help()  # Başlangıçta komutları göster
@@ -214,13 +215,13 @@ class BaseBot:
         print(f"{Fore.GREEN}p{Style.RESET_ALL} - Duraklat/Devam et")
         print(f"{Fore.GREEN}s{Style.RESET_ALL} - Durum bilgisi göster")
         print(f"{Fore.GREEN}c{Style.RESET_ALL} - Konsolu temizle")
+        print(f"{Fore.GREEN}d{Style.RESET_ALL} - Debug modu aç/kapat")
         print(f"{Fore.GREEN}q{Style.RESET_ALL} - Çıkış")
         print(f"{Fore.GREEN}h{Style.RESET_ALL} - Bu yardım mesajı")
         print(f"{Fore.CYAN}=================={Style.RESET_ALL}\n")
         
     def show_status(self):
         """Bot durumunu detaylı gösterir"""
-        status = "Duraklatıldı ⏸️" if self.is_paused else "Çalışıyor ▶️"
         runtime = datetime.now() - self.start_time
         hours, remainder = divmod(runtime.total_seconds(), 3600)
         minutes, seconds = divmod(remainder, 60)
@@ -230,6 +231,9 @@ class BaseBot:
         print(f"{Fore.CYAN}{'='*50}{Style.RESET_ALL}")
         
         # Genel İstatistikler
+        # Botun çalışma durumu
+        status = "Çalışıyor" if self.is_running else "Durduruldu"
+        
         stats = [
             ["Çalışma Durumu", status],
             ["Çalışma Süresi", f"{int(hours)}s {int(minutes)}d {int(seconds)}s"],
@@ -277,3 +281,13 @@ class BaseBot:
         
         # Yardımı tekrar göster
         self.show_help()
+        
+    def toggle_debug(self):
+        """Debug modunu aç/kapa"""
+        if hasattr(self, 'debug_mode'):
+            self.debug_mode = not self.debug_mode
+            status = "açıldı 🔍" if self.debug_mode else "kapatıldı 🔒"
+            print(f"{Fore.CYAN}ℹ️ Debug modu {status}{Style.RESET_ALL}")
+            logger.info(f"Debug modu {status}")
+        else:
+            print(f"{Fore.YELLOW}⚠️ Bu bot türü debug modunu desteklemiyor{Style.RESET_ALL}")

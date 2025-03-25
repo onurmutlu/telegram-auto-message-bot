@@ -26,7 +26,7 @@ class MemberMessageBot(BaseBot):
     Telegram gruplarına otomatik mesaj gönderen ve özel mesajları yöneten bot sınıfı
     """
     def __init__(self, api_id: int, api_hash: str, phone: str, 
-                 group_links: List[str], user_db: UserDatabase, config=None):
+                 group_links: List[str], user_db: UserDatabase, config=None, debug_mode: bool = False):
         super().__init__(api_id, api_hash, phone, user_db, config)
         
         self.group_links = group_links
@@ -56,6 +56,36 @@ class MemberMessageBot(BaseBot):
             'last_pm_time': None,
             'consecutive_errors': 0
         }
+        
+        # Hata veren grupların hafızadaki kopyası
+        self.error_groups: Set[int] = set()
+        self.error_reasons: Dict[int, str] = {}
+        
+        # Başlangıçta veritabanından hata veren grupları yükle
+        self._load_error_groups()
+        
+        self.debug_mode = debug_mode  # Tekrarlanan kullanıcı aktivitelerini gösterip göstermeme
+        
+        # Aktiviteleri takip etmek için yeni set
+        self.displayed_users = set()
+        
+        # Performans ayarları
+        self.bulk_update_size = 10  # Bulk veritabanı güncellemeleri için
+        self.connection_retries = 3  # Bağlantı hatası durumunda tekrar deneme sayısı
+        self.retry_delay = 5  # Saniye cinsinden her tekrar deneme arasındaki bekleme
+        
+        # Bellek optimizasyonu
+        self.max_cached_users = 1000  # Bellekte saklanacak maksimum kullanıcı sayısı
+        self.cache_cleanup_interval = 3600  # Saniye cinsinden önbellek temizleme aralığı
+        
+        # Terminal çıktıları
+        self.terminal_format.update({
+            'user_activity_new': f"{Fore.CYAN}👁️ Yeni kullanıcı aktivitesi: {{}}{Style.RESET_ALL}",
+            'user_activity_exists': f"{Fore.BLUE}🔄 Tekrar aktivite: {{}}{Style.RESET_ALL}",
+            'user_invite_success': f"{Fore.GREEN}✅ Davet gönderildi: {{}}{Style.RESET_ALL}",
+            'user_invite_fail': f"{Fore.RED}❌ Davet başarısız: {{}} ({{}}){Style.RESET_ALL}",
+            'user_already_invited': f"{Fore.YELLOW}⚠️ Zaten davet edildi: {{}}{Style.RESET_ALL}"
+        })
         
     def _load_message_templates(self):
         """Mesaj şablonlarını JSON dosyalarından yükler"""
@@ -88,9 +118,17 @@ class MemberMessageBot(BaseBot):
         """Botu başlatır ve görevleri oluşturur"""
         tasks = []
         try:
+            logger.info("Bot başlatılıyor...")
+            
             # Client başlat
             await self.client.start(phone=self.phone)
             logger.info("🚀 Bot aktif edildi!")
+            
+            # Grup hata kayıtlarını yönet
+            await self._manage_error_groups()
+            
+            # Periyodik temizleme görevi oluştur
+            asyncio.create_task(self._periodic_cleanup())
             
             # Komut dinleyiciyi başlat
             command_task = asyncio.create_task(self.command_listener())
@@ -127,6 +165,42 @@ class MemberMessageBot(BaseBot):
             # Bağlantıyı kapat
             await self._cleanup()
     
+    async def _manage_error_groups(self):
+        """Başlangıçta grup hata kayıtlarını yönetir"""
+        error_groups = self.db.get_error_groups()
+        if not error_groups:
+            logger.info("Hata veren grup kaydı bulunmadı")
+            return
+        
+        # Konsola hata gruplarını göster
+        print(f"\n{Fore.YELLOW}⚠️ {len(error_groups)} adet hata veren grup kaydı bulundu:{Style.RESET_ALL}")
+        
+        error_table = []
+        for group_id, group_title, error_reason, error_time, retry_after in error_groups:
+            error_table.append([group_id, group_title, error_reason, retry_after])
+        
+        print(tabulate(error_table, headers=["Grup ID", "Grup Adı", "Hata", "Yeniden Deneme"], tablefmt="grid"))
+        
+        # Kullanıcıya sor
+        print(f"\n{Fore.CYAN}Hata kayıtlarını ne yapmak istersiniz?{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}1){Style.RESET_ALL} Kayıtları koru (varsayılan)")
+        print(f"{Fore.GREEN}2){Style.RESET_ALL} Tümünü temizle (yeniden deneme)")
+        
+        try:
+            selection = input("\nSeçiminiz (1-2): ").strip() or "1"
+            
+            if selection == "2":
+                cleared = self.db.clear_all_error_groups()
+                self.error_groups.clear()
+                self.error_reasons.clear()
+                logger.info(f"Tüm hata kayıtları temizlendi ({cleared} kayıt)")
+                print(f"{Fore.GREEN}✅ {cleared} adet hata kaydı temizlendi{Style.RESET_ALL}")
+            else:
+                logger.info("Hata kayıtları korundu")
+                print(f"{Fore.CYAN}ℹ️ Hata kayıtları korundu{Style.RESET_ALL}")
+        except Exception as e:
+            logger.error(f"Hata kayıtları yönetim hatası: {str(e)}")
+    
     def _setup_message_handlers(self):
         """Telethon mesaj işleyicilerini ayarlar"""
         @self.client.on(events.NewMessage(incoming=True))
@@ -138,7 +212,7 @@ class MemberMessageBot(BaseBot):
                 # Grup mesajı mı?
                 else:
                     # Yanıt mı?
-                    if event.is_reply:
+                    if (event.is_reply):
                         await self._handle_group_reply(event)
                     # Normal mesaj mı?
                     else:
@@ -151,12 +225,19 @@ class MemberMessageBot(BaseBot):
         while self.is_running:
             if not self.is_paused:
                 try:
-                    current_time = datetime.now().strftime("%H:%M:%S")
-                    logger.info(self.terminal_format['tur_baslangic'].format(current_time))
+                    # Her turda önce süresi dolmuş hataları temizle
+                    cleared_errors = self.db.clear_expired_error_groups()
+                    if cleared_errors > 0:
+                        logger.info(f"{cleared_errors} adet süresi dolmuş hata kaydı temizlendi")
+                        # Hafızadaki hata listesini de güncelle
+                        self._load_error_groups()
                     
-                    # Grupları al
+                    current_time = datetime.now().strftime("%H:%M:%S")
+                    logger.info(f"🔄 Yeni tur başlıyor: {current_time}")
+                    
+                    # Grupları al - DİNAMİK GRUP LİSTESİ
                     groups = await self._get_groups()
-                    logger.info(self.terminal_format['grup_sayisi'].format(len(groups), len(self.error_groups)))
+                    logger.info(f"📊 Aktif Grup: {len(groups)} | ⚠️ Devre Dışı: {len(self.error_groups)}")
                     
                     # Mesaj gönderimleri için sayaç
                     tur_mesaj_sayisi = 0
@@ -169,13 +250,13 @@ class MemberMessageBot(BaseBot):
                         success = await self._send_message_to_group(group)
                         if success:
                             tur_mesaj_sayisi += 1
-                            logger.info(self.terminal_format['basari'].format(f"Mesaj gönderildi: {group.title}"))
+                            logger.info(f"✅ Mesaj gönderildi: {group.title}")
                         
                         # Mesajlar arasında bekle
                         await asyncio.sleep(random.randint(8, 15))
                     
                     # Tur istatistiklerini göster
-                    logger.info(self.terminal_format['mesaj_durumu'].format(tur_mesaj_sayisi, self.sent_count))
+                    logger.info(f"✉️ Turda: {tur_mesaj_sayisi} | 📈 Toplam: {self.sent_count}")
                     
                     # Tur sonrası bekle
                     wait_time = 8 * 60  # 8 dakika
@@ -228,13 +309,27 @@ class MemberMessageBot(BaseBot):
                 await asyncio.sleep(1)
     
     async def _get_groups(self) -> List:
-        """Aktif grupları getirir"""
+        """Aktif grupları getirir - her seferinde yeni liste oluşturur"""
         groups = []
         try:
+            # Mevcut grupları ve hata veren grupları kaydet
             async for dialog in self.client.iter_dialogs():
-                # Sadece grupları ve hata vermeyenleri al
-                if dialog.is_group and dialog.id not in self.error_groups:
-                    groups.append(dialog)
+                # Sadece grupları al
+                if dialog.is_group:
+                    # Eğer hata verenler arasında değilse listeye ekle
+                    if dialog.id not in self.error_groups:
+                        groups.append(dialog)
+                    else:
+                        logger.debug(
+                            f"Grup atlandı (hata kayıtlı): {dialog.title} (ID:{dialog.id})",
+                            extra={
+                                'group_id': dialog.id,
+                                'group_title': dialog.title,
+                                'error_reason': self.error_reasons.get(dialog.id, "Bilinmeyen hata")
+                            }
+                        )
+            
+            logger.info(f"Toplam {len(groups)} aktif grup bulundu")
         except Exception as e:
             logger.error(f"Grup getirme hatası: {str(e)}")
         
@@ -244,27 +339,95 @@ class MemberMessageBot(BaseBot):
         """Gruba mesaj gönderir"""
         try:
             message = random.choice(self.messages)
+            
+            # Mesaj gönderimi öncesi log
+            logger.debug(
+                f"Mesaj gönderiliyor: Grup={group.title} (ID:{group.id})",
+                extra={
+                    'group_id': group.id,
+                    'group_title': group.title,
+                    'message': message[:50] + ('...' if len(message) > 50 else '')
+                }
+            )
+            
+            # Konsol çıktısı
+            print(f"{Fore.MAGENTA}📨 Gruba Mesaj: '{group.title}' grubuna mesaj gönderiliyor{Style.RESET_ALL}")
+            
+            # Mesajı gönder
             await self.client.send_message(group.id, message)
+            
             # İstatistikleri güncelle
             self.sent_count += 1
             self.processed_groups.add(group.id)
             self.last_message_time = datetime.now()
+            
+            # Başarılı gönderim logu
+            logger.info(
+                f"Mesaj başarıyla gönderildi: {group.title} (ID:{group.id})",
+                extra={
+                    'group_id': group.id, 
+                    'group_title': group.title,
+                    'message_id': self.sent_count,
+                    'timestamp': self.last_message_time.strftime('%H:%M:%S')
+                }
+            )
             
             return True
             
         except errors.FloodWaitError as e:
             # Flood Wait hatası için özel işlem
             wait_time = e.seconds + random.randint(5, 15)  # Ekstra bekleme ekle
-            logger.warning(self.terminal_format['uyari'].format(f"Flood wait: {wait_time} saniye bekleniyor ({group.title})"))
+            logger.warning(
+                f"Flood wait hatası: {wait_time} saniye bekleniyor ({group.title} - ID:{group.id})",
+                extra={
+                    'error_type': 'FloodWaitError',
+                    'group_id': group.id,
+                    'group_title': group.title,
+                    'wait_time': wait_time
+                }
+            )
             await asyncio.sleep(wait_time)
             return False
         except (errors.ChatWriteForbiddenError, errors.UserBannedInChannelError) as e:
             # Erişim engelleri için kalıcı olarak devre dışı bırak
-            self._mark_error_group(group, f"Erişim engeli: {str(e)}")
+            error_reason = f"Erişim engeli: {str(e)}"
+            self._mark_error_group(group, error_reason)
+            
+            # Veritabanına da kaydet - 8 saat sonra yeniden dene
+            self.db.add_error_group(group.id, group.title, error_reason, retry_hours=8)
+            
+            logger.error(
+                f"Grup erişim hatası: {group.title} (ID:{group.id}) - {error_reason}",
+                extra={
+                    'error_type': e.__class__.__name__,
+                    'group_id': group.id,
+                    'group_title': group.title,
+                    'error_message': str(e),
+                    'action': 'devre_dışı_bırakıldı',
+                    'retry_after': '8 saat'
+                }
+            )
             return False
+            
         except Exception as e:
-            # Geçici hata olabilir, tekrar denenebilir
-            logger.error(self.terminal_format['hata'].format(f"Grup mesaj hatası: {str(e)}"))
+            # Diğer hatalar için de hata grubuna ekle
+            if "The channel specified is private" in str(e):
+                error_reason = f"Erişim engeli: {str(e)}"
+                self._mark_error_group(group, error_reason)
+                self.db.add_error_group(group.id, group.title, error_reason, retry_hours=8)
+                logger.error(f"Grup erişim hatası: {group.title} (ID:{group.id}) - {error_reason}")
+            else:
+                # Geçici hata olabilir
+                logger.error(
+                    f"Grup mesaj hatası: {group.title} (ID:{group.id}) - {str(e)}",
+                    extra={
+                        'error_type': e.__class__.__name__,
+                        'group_id': group.id,
+                        'group_title': group.title,
+                        'error_message': str(e)
+                    }
+                )
+            
             if "Too many requests" in str(e):
                 await asyncio.sleep(60)  # Rate limiting için uzun süre bekle
             else:
@@ -416,29 +579,157 @@ class MemberMessageBot(BaseBot):
             logger.error(f"Grup yanıt hatası: {str(e)}")
     
     async def _track_active_users(self, event) -> None:
-        """Aktif kullanıcıları güvenli şekilde takip eder"""
+        """Aktif kullanıcıları takip eder"""
         try:
             user = await event.get_sender()
             if not user:
+                logger.debug("Kullanıcı bilgisi alınamadı")
                 return
                 
             user_id = getattr(user, 'id', None)
             if not user_id:
+                logger.debug("Kullanıcı ID'si alınamadı")
                 return
                 
-            # Bot mu?
-            is_bot = getattr(user, 'bot', False)
-            # Yönetici mi?
-            admin_rights = getattr(user, 'admin_rights', None)
-            # Kurucu mu?
-            is_creator = getattr(user, 'creator', False) or hasattr(user, 'creator_rights')
+            username = getattr(user, 'username', None)
+            user_info = f"@{username}" if username else f"ID:{user_id}"
             
-            if not (is_bot or admin_rights or is_creator):
-                username = getattr(user, 'username', None)
-                self.db.add_user(user_id, username)
+            # Bot veya yönetici mi kontrol et - güvenli kontrollerle
+            is_bot = hasattr(user, 'bot') and user.bot
+            is_admin = hasattr(user, 'admin_rights') and user.admin_rights
+            is_creator = hasattr(user, 'creator') and user.creator
+            
+            if is_bot or is_admin or is_creator:
+                if user_info not in self.displayed_users:
+                    logger.debug(f"Bot/Admin kullanıcısı atlandı: {user_info}")
+                return
+            
+            # Kullanıcı daha önce gösterildi mi?
+            if user_info in self.displayed_users:
+                # Loglama seviyesini düşür
+                if self.debug_mode:
+                    print(self.terminal_format['user_activity_exists'].format(user_info))
+                return
                 
+            # Yeni kullanıcıyı göster ve listeye ekle
+            self.displayed_users.add(user_info)
+            
+            # Veritabanı kontrolü
+            was_invited = self.db.is_invited(user_id)
+            was_recently_invited = self.db.was_recently_invited(user_id, 4)
+            
+            invite_status = ""
+            if was_invited:
+                invite_status = " (✓ Davet edildi)"
+            elif was_recently_invited:
+                invite_status = " (⏱️ Son 4 saatte davet edildi)" 
+            
+            # Konsol çıktısı
+            print(self.terminal_format['user_activity_new'].format(
+                f"{user_info}{invite_status}"
+            ))
+            
+            # Kullanıcıyı veritabanına ekle
+            self.db.add_user(user_id, username)
+            
         except Exception as e:
-            logger.error(f"Kullanıcı takip güvenli kontrol hatası: {str(e)}")
+            logger.error(f"Kullanıcı takip hatası: {str(e)}")
+    
+    async def _invite_user(self, user_id: int, username: Optional[str]) -> bool:
+        """Kullanıcıya özel davet mesajı gönderir"""
+        try:
+            # Kullanıcı bilgisini log
+            user_info = f"@{username}" if username else f"ID:{user_id}"
+            
+            # Daha önce davet edilmiş mi?
+            if self.db.is_invited(user_id) or self.db.was_recently_invited(user_id, 4):
+                print(self.terminal_format['user_already_invited'].format(user_info))
+                logger.debug(f"Zaten davet edilmiş kullanıcı atlandı: {user_info}")
+                return False
+            
+            logger.debug(
+                f"Kullanıcı davet ediliyor: {user_info}",
+                extra={
+                    'user_id': user_id,
+                    'username': username
+                }
+            )
+            
+            # Davet mesajını oluştur ve gönder
+            message = self._create_invite_message()
+            await self.client.send_message(user_id, message)
+            
+            # Veritabanını güncelle
+            self.db.update_last_invited(user_id)
+            
+            # Başarılı işlem logu
+            logger.info(
+                f"Davet başarıyla gönderildi: {user_info}",
+                extra={
+                    'user_id': user_id,
+                    'username': username,
+                    'invite_time': datetime.now().strftime('%H:%M:%S')
+                }
+            )
+            
+            # Konsol çıktısı
+            print(self.terminal_format['user_invite_success'].format(user_info))
+            
+            return True
+            
+        except errors.FloodWaitError as e:
+            # Flood Wait hatası
+            self.pm_state['consecutive_errors'] += 1
+            wait_time = e.seconds + random.randint(10, 30)
+            
+            print(self.terminal_format['user_invite_fail'].format(user_info, f"FloodWait: {wait_time}s"))
+            
+            logger.warning(
+                f"Kullanıcı davet FloodWait hatası: {wait_time} saniye bekleniyor ({user_info})",
+                extra={
+                    'error_type': 'FloodWaitError',
+                    'user_id': user_id,
+                    'username': username,
+                    'wait_time': wait_time
+                }
+            )
+            await asyncio.sleep(wait_time)
+            return False
+            
+        except (errors.UserIsBlockedError, errors.UserIdInvalidError, errors.PeerIdInvalidError) as e:
+            # Kalıcı hatalar - bu kullanıcıyı işaretleyerek atlayabiliriz
+            print(self.terminal_format['user_invite_fail'].format(user_info, f"Kalıcı hata: {e.__class__.__name__}"))
+            
+            logger.error(
+                f"Kullanıcı davet hatası (kalıcı): {user_info} - {str(e)}",
+                extra={
+                    'error_type': e.__class__.__name__,
+                    'user_id': user_id,
+                    'username': username,
+                    'error_message': str(e),
+                    'action': 'kalıcı_engel_işaretlendi'
+                }
+            )
+            # Kullanıcıyı veritabanında işaretle
+            self.db.mark_user_blocked(user_id)
+            return False
+            
+        except Exception as e:
+            # Diğer hatalar
+            self.pm_state['consecutive_errors'] += 1
+            print(self.terminal_format['user_invite_fail'].format(user_info, f"Hata: {e.__class__.__name__}"))
+            
+            logger.error(
+                f"Kullanıcı davet hatası: {user_info} - {str(e)}",
+                extra={
+                    'error_type': e.__class__.__name__,
+                    'user_id': user_id,
+                    'username': username,
+                    'error_message': str(e)
+                }
+            )
+            await asyncio.sleep(30)  # Genel hata durumunda bekle
+            return False
     
     def show_status(self):
         """Bot durumunu detaylı gösterir"""
@@ -457,3 +748,67 @@ class MemberMessageBot(BaseBot):
             davet_stats.append(["Son Davet Zamanı", self.pm_state['last_pm_time'].strftime('%H:%M:%S')])
         
         print(tabulate(davet_stats, headers=["Özellik", "Değer"], tablefmt="grid"))
+
+    def _load_error_groups(self):
+        """Veritabanından hata veren grupları yükler"""
+        error_groups = self.db.get_error_groups()
+        for group_id, group_title, error_reason, _, _ in error_groups:
+            self.error_groups.add(group_id)
+            self.error_reasons[group_id] = error_reason
+            
+        if self.error_groups:
+            logger.info(f"{len(self.error_groups)} adet hata veren grup yüklendi")
+
+    async def _periodic_cleanup(self):
+        """Periyodik temizleme işlemleri yapar"""
+        while self.is_running:
+            try:
+                await asyncio.sleep(600)  # 10 dakikada bir çalıştır
+                
+                # Süresi dolmuş hataları temizle
+                cleared_errors = self.db.clear_expired_error_groups()
+                if cleared_errors > 0:
+                    logger.info(f"{cleared_errors} adet süresi dolmuş hata kaydı temizlendi")
+                    # Hafızadaki hata listesini de güncelle
+                    self._load_error_groups()
+                    
+                # Aktivite listesini belirli bir boyutta tut
+                if len(self.displayed_users) > 500:  # Örnek limit
+                    logger.info(f"Aktivite takip listesi temizleniyor ({len(self.displayed_users)} -> 100)")
+                    # En son eklenen 100 kullanıcıyı tut
+                    self.displayed_users = set(list(self.displayed_users)[-100:])
+                    
+            except Exception as e:
+                logger.error(f"Periyodik temizleme hatası: {str(e)}")
+    
+    async def shutdown(self):
+        """Bot'u düzgün şekilde kapatır ve final istatistiklerini gösterir"""
+        try:
+            # Çalışma istatistikleri
+            print(f"\n{Fore.CYAN}=== BOT ÇALIŞMA İSTATİSTİKLERİ ==={Style.RESET_ALL}")
+            
+            # Oturum süresi
+            uptime = datetime.now() - self.start_time
+            hours, remainder = divmod(uptime.total_seconds(), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            print(f"{Fore.GREEN}▶ Çalışma süresi:{Style.RESET_ALL} {int(hours)}:{int(minutes):02}:{int(seconds):02}")
+            
+            # Mesaj istatistikleri
+            print(f"{Fore.GREEN}▶ Toplam gönderilen mesaj:{Style.RESET_ALL} {self.sent_count}")
+            
+            # Hata istatistikleri
+            print(f"{Fore.GREEN}▶ Hata veren grup sayısı:{Style.RESET_ALL} {len(self.error_groups)}")
+            
+            # Veritabanı istatistikleri
+            stats = self.db.get_database_stats()
+            print(f"{Fore.GREEN}▶ Toplam kullanıcı sayısı:{Style.RESET_ALL} {stats['total_users']}")
+            print(f"{Fore.GREEN}▶ Davet edilen kullanıcı sayısı:{Style.RESET_ALL} {stats['invited_users']}")
+            print(f"{Fore.CYAN}==========================================={Style.RESET_ALL}\n")
+            
+        except Exception as e:
+            logger.error(f"İstatistik gösterme hatası: {str(e)}")
+        
+        # Client bağlantısını kapat
+        if hasattr(self, 'client') and self.client:
+            await self.client.disconnect()
+            logger.info("Client bağlantısı kapatıldı")

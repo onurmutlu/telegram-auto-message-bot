@@ -1,33 +1,56 @@
-ÖZEL TİCARİ LİSANS
+ARAYIŞ YAZILIM TİCARİ YAZILIM LİSANS SÖZLEŞMESİ
+Sürüm 1.0, Mart 2025
 
-Telif Hakkı (c) 2025 [ŞİRKET ADI]
+TELEGRAM AUTO MESSAGE BOT v3.1
 
-Bu yazılım ve ilişkili dokümantasyon dosyaları, [ŞİRKET ADI]'nın özel mülkiyetidir. 
-Tüm hakları saklıdır.
+© 2025 Arayiş Yazılım. Tüm hakları saklıdır.
 
-BU YAZILIM SADECE YAZILIM KİRALAMA SÖZLEŞMESİ KOŞULLARI ALTINDA KULLANILMAK ÜZERE 
-LİSANSLANMIŞTIR VE LİSANS SÖZLEŞMESİ OLMADAN KOPYALANMASI, DAĞITILMASI VEYA 
-DEĞİŞTİRİLMESİ YASAKTIR.
+Bu belge, kullanıcı ile Arayiş Yazılım (bundan sonra "Lisans Sahibi" olarak anılacaktır) 
+arasındaki lisans sözleşmesini oluşturur.
 
-YETKİLİ KULLANICI:
-Bu yazılımı yalnızca geçerli bir lisans anlaşması olan kullanıcılar kullanabilir.
+1. LİSANS TÜRÜ
+--------------
+Bu yazılım, ticari bir kiralama sözleşmesi kapsamında lisanslanmıştır. Kullanım hakları, 
+sözleşmede belirtilen süre ve koşullarla sınırlıdır.
 
-KISITLAMALAR:
-1. Yazılımın kaynak kodunu değiştirmek, tersine mühendislik yapmak veya kaynak 
-   kodunu elde etmeye çalışmak yasaktır.
-2. Yazılımı kiralama sözleşmesi dışında herhangi bir şekilde kopyalamak, dağıtmak 
-   veya yeniden lisanslamak yasaktır.
-3. Yazılımın tümünü veya bir kısmını, [ŞİRKET ADI]'nın önceden yazılı izni olmadan 
-   üçüncü taraflara aktarmak yasaktır.
+2. KULLANIM İZNİ
+---------------
+Lisans Sahibi, müşteriye belirli bir süre için yazılımı kullanma hakkı vermektedir. 
+Bu hak devredilemez ve münhasır olmayan bir kullanım hakkıdır.
 
-ÜRÜN:
-Telegram Auto Message Bot v3.1
+3. KISITLAMALAR
+--------------
+a) Yazılımın kaynak koduna erişim, tersine mühendislik, decompile etme, 
+   kaynak koda dönüştürme yasaktır.
 
-SORUMLULUK REDDİ:
-BU YAZILIM "OLDUĞU GİBİ" TEMİN EDİLİR VE HİÇBİR GARANTİ VERİLMEZ. YAZILIMIN KALİTESİ 
-VE PERFORMANSI İLE İLGİLİ TÜM RİSK SİZE AİTTİR. HİÇBİR KOŞULDA [ŞİRKET ADI], BU 
-YAZILIMIN KULLANIMI VEYA KULLANILAMAMASINDAN KAYNAKLANAN HİÇBİR ZARAR İÇİN SORUMLU 
-OLMAYACAKTIR.
+b) Yazılımın kopyalanması, çoğaltılması, yeniden dağıtılması yasaktır.
 
-BU LİSANS KOŞULLARINI KABUL ETMİYORSANIZ, YAZILIMI YÜKLEMEYE VEYA KULLANMAYA YETKİLİ 
-DEĞİLSİNİZ.
+c) Yazılımın alt lisanslama yoluyla üçüncü taraflara kullandırılması yasaktır.
+
+d) Yazılım üzerinde Lisans Sahibi'nin yazılı izni olmadan değişiklik yapılması yasaktır.
+
+4. SÜRE VE SONLANDIRMA
+---------------------
+Lisans, kiralama sözleşmesinde belirtilen süre boyunca geçerlidir. Süre sonunda, 
+yazılımın kullanımı otomatik olarak sonlanır. Sözleşmenin herhangi bir şekilde ihlali durumunda, 
+Lisans Sahibi lisansı derhal sonlandırma hakkını saklı tutar.
+
+5. SORUMLULUK SINIRLAMASI
+------------------------
+Yazılım "olduğu gibi" sunulmaktadır ve hiçbir garanti verilmemektedir. Lisans Sahibi, 
+yazılımın kullanımından doğabilecek doğrudan veya dolaylı zararlardan sorumlu tutulamaz.
+
+6. TAZMİNAT
+----------
+Kullanıcı, bu sözleşmenin herhangi bir maddesinin ihlali sonucu Lisans Sahibi'nin 
+uğrayabileceği tüm zararları tazmin etmeyi kabul eder.
+
+7. DEĞİŞİKLİKLER
+--------------
+Lisans Sahibi, bu lisans sözleşmesini önceden bildirmeksizin değiştirme hakkını saklı tutar.
+
+8. UYGULANACAK HUKUK
+------------------
+Bu sözleşme Türkiye Cumhuriyeti kanunlarına tabidir ve bu kanunlar çerçevesinde yorumlanır.
+
+BU LİSANS KOŞULLARINI KABUL ETMİYORSANIZ, YAZILIMI KULLANMAYA YETKİLİ DEĞİLSİNİZ.

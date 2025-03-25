@@ -33,3 +33,5 @@ logs/
 # Diğer
 .DS_Store
 node_modules/
+data/users.db-wal
+data/users.db-shm

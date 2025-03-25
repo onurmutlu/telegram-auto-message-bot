@@ -19,6 +19,12 @@ class TelegramConfig:
     logs_path: Path
     user_db_path: Path
     data_path: Path
+    environment: str = "production"  # "production" veya "development"
+    
+    @property
+    def is_production(self) -> bool:
+        """Üretim ortamında mı çalışıyor?"""
+        return self.environment.lower() == "production"
 
 class Config:
     _instance: TelegramConfig = None
@@ -39,6 +45,9 @@ class Config:
             logs_path = root_dir / 'logs'
             user_db_path = root_dir / 'data' / 'users.db'
             
+            # Ortam değişkeninden geliştirme modunu al
+            environment = os.getenv("ENVIRONMENT", "production")
+            
             Config._instance = TelegramConfig(
                 api_id=int(os.getenv('API_ID', '0')),
                 api_hash=os.getenv('API_HASH', ''),
@@ -46,16 +55,16 @@ class Config:
                 session_path=session_path,
                 logs_path=logs_path,
                 user_db_path=user_db_path,
-                data_path=root_dir / 'data'
+                data_path=root_dir / 'data',
+                environment=environment
             )
             
             # Dizinleri oluştur
             session_path.mkdir(parents=True, exist_ok=True)
             logs_path.mkdir(parents=True, exist_ok=True)
             (root_dir / 'data').mkdir(parents=True, exist_ok=True)
-            
-            # ...doğrulamalar ve diğer işlemler...
-                
+            (root_dir / 'data' / 'backups').mkdir(parents=True, exist_ok=True)
+        
         return Config._instance
     
     @staticmethod
