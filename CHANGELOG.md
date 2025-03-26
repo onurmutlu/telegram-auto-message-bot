@@ -4,6 +4,14 @@
 
 Bu belge, Telegram Auto Message Bot'un tüm önemli değişikliklerini içerir.
 
+## [3.3.1] - 2025-03-26
+
+### Düzeltmeler
+- Hata gruplarını yönetirken `retry_after` değişkeninin tipine göre güvenli işlem yapma
+- `strftime()` metodu hatası giderildi: String türündeki tarih değerleri için güvenli kontrol
+- Test sistemi güncellendi ve daha esnek hale getirildi
+- GitHub CI/CD entegrasyonu ile otomatik test çalıştırma
+
 ## [3.3.0] - 2025-03-28
 
 ### Eklenen Özellikler
