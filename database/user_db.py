@@ -340,6 +340,21 @@ class UserDatabase:
         except sqlite3.Error as e:
             logger.error(f"Veritabanı istatistikleri alma hatası: {str(e)}")
             return stats
+            
+    def get_all_users(self):
+        """Tüm kullanıcıları getirir"""
+        try:
+            with self.connection:
+                cursor = self.connection.execute("""
+                    SELECT user_id, username, invited, last_invited, 
+                           first_seen, blocked, is_admin 
+                    FROM users
+                    ORDER BY user_id
+                """)
+                return cursor.fetchall()
+        except sqlite3.Error as e:
+            logger.error(f"Tüm kullanıcıları getirme hatası: {str(e)}")
+            return []
         
     def backup_database(self):
         """Veritabanının yedeğini alır"""
@@ -381,3 +396,12 @@ class UserDatabase:
                 logger.info("Veritabanı bağlantısı kapatıldı")
             except sqlite3.Error as e:
                 logger.error(f"Veritabanı kapatma hatası: {str(e)}")
+                
+    def close_connection(self):
+        """Veritabanı bağlantısını güvenli şekilde kapatır"""
+        try:
+            if self.connection:
+                self.connection.close()
+                logger.info("Veritabanı bağlantısı kapatıldı")
+        except Exception as e:
+            logger.error(f"Veritabanı kapatma hatası: {str(e)}")

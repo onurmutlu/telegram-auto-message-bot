@@ -1,150 +1,134 @@
 """
-Loglama yardımcıları
+Loglama yapılandırmaları için yardımcı modül
 """
-import logging
-from pathlib import Path
-from colorama import init, Fore, Style, Back
+import os
 import sys
+import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 import json
+from typing import Dict, Any, Optional
+from colorama import init, Fore, Style, Back
 from datetime import datetime
-# Biçimlendiriciler
-file_formatter = logging.Formatter(
-    '%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - [%(funcName)s] - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+
 init(autoreset=True)  # Colorama'yı başlat
-
-class ColoredFormatter(logging.Formatter):
-    """Renkli loglama biçimlendiricisi"""
-    
-    COLORS = {
-        'DEBUG': Fore.BLUE,
-        'INFO': Fore.GREEN,
-        'WARNING': Fore.YELLOW,
-        'ERROR': Fore.RED,
-        'CRITICAL': Fore.WHITE + Back.RED
-    }
-    
-    def format(self, record):
-        levelname = record.levelname
-        message = super().format(record)
-        if levelname in self.COLORS:
-            return f"{self.COLORS[levelname]}{message}{Style.RESET_ALL}"
-        return message
-
-class JsonFormatter(logging.Formatter):
-    """
-    JSON formatında log üreten biçimlendirici.
-    Yapılandırılmış verileri ve ekstra alanları JSON olarak kaydeder.
-    """
-    def format(self, record):
-        log_data = {
-            'timestamp': datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S'),
-            'level': record.levelname,
-            'message': record.getMessage(),
-            'module': record.module,
-            'function': record.funcName,
-            'line': record.lineno,
-        }
-        
-        # Ekstra alanları ekle
-        if hasattr(record, 'extra_data') and record.extra_data:
-            log_data.update(record.extra_data)
-            
-        return json.dumps(log_data)
 
 class ExtraAdapter(logging.LoggerAdapter):
     """Ekstra veri ile log yapmak için adapter"""
-    
     def process(self, msg, kwargs):
-        # Mevcut extra verileri al veya boş dict oluştur
-        kwargs.setdefault('extra', {})
-        # Adapter'ın extra verilerini ekle
-        kwargs['extra'].update(self.extra)
+        extra = kwargs.get("extra", {})
+        if extra:
+            kwargs["extra"] = self.extra
+            for key, value in extra.items():
+                kwargs["extra"][key] = value
         return msg, kwargs
 
-class LoggerSetup:
-    @staticmethod
-    def setup_logger(logs_path: Path, log_level: int = logging.DEBUG) -> logging.Logger:
-        """
-        Logger kurulumu yapar
+class JSONFormatter(logging.Formatter):
+    """JSON formatında log yapılandırması"""
+    def format(self, record):
+        log_data = {
+            'timestamp': self.formatTime(record, self.datefmt),
+            'name': record.name,
+            'level': record.levelname,
+            'message': record.getMessage(),
+            'path': record.pathname,
+            'line': record.lineno,
+            'function': record.funcName
+        }
         
-        Args:
-            logs_path: Log dosyalarının kaydedileceği dizin
-            log_level: Log seviyesi
+        # Varsa ekstra veriyi ekle
+        if hasattr(record, 'extra_data'):
+            log_data['extra'] = record.extra_data
             
-        Returns:
-            Logger: Yapılandırılmış logger nesnesi
+        # Varsa hata bilgisini ekle
+        if record.exc_info:
+            log_data['exception'] = self.formatException(record.exc_info)
+            
+        return json.dumps(log_data)
+
+class ColoredFormatter(logging.Formatter):
+    """Renklendirilmiş konsol log formatı"""
+    COLORS = {
+        'DEBUG': '\033[94m',  # Mavi
+        'INFO': '\033[92m',   # Yeşil
+        'WARNING': '\033[93m',# Sarı
+        'ERROR': '\033[91m',  # Kırmızı
+        'CRITICAL': '\033[41m\033[97m', # Beyaz üzerine kırmızı arkaplan
+    }
+    RESET = '\033[0m'
+    
+    def format(self, record):
+        log_message = super().format(record)
+        if record.levelname in self.COLORS:
+            log_message = f"{self.COLORS[record.levelname]}{log_message}{self.RESET}"
+        return log_message
+
+class LoggerSetup:
+    """Logger yapılandırma yardımcısı"""
+    
+    @staticmethod
+    def setup_logger(logs_path: Path, detailed_logs_path: Optional[Path] = None, level=logging.INFO) -> logging.Logger:
         """
-        # Log dizini oluştur
-        logs_path.mkdir(parents=True, exist_ok=True)
+        Logger yapılandırmasını ayarlar
+        Args:
+            logs_path: Log dosyası yolu
+            detailed_logs_path: Detaylı log dosyası yolu (opsiyonel)
+            level: Log seviyesi
+        Returns:
+            logging.Logger: Yapılandırılmış logger nesnesi
+        """
+        # Logs dizinini oluştur (dosyanın değil, dizinin)
+        logs_dir = logs_path.parent
+        logs_dir.mkdir(parents=True, exist_ok=True)
         
-        # Logger oluştur
-        logger = logging.getLogger('telegram_bot')
-        if logger.hasHandlers():
-            for handler in logger.handlers:
-                logger.removeHandler(handler)
+        # Root logger ayarları
+        root_logger = logging.getLogger()
+        root_logger.setLevel(level)
         
-        # ÖNEMLİ: Ana logger seviyesini DEBUG olarak ayarla
-        logger.setLevel(logging.DEBUG)
+        # Eski handler'ları temizle
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
         
-        # ÖNEMLİ: propagate özelliğini True yap
-        logger.propagate = True
-        
-        # Ana log dosyası - Seviyesini DEBUG olarak değiştir
-        file_handler = logging.FileHandler(
-            logs_path / 'bot.log',
-            encoding='utf-8'
-        )
-        file_handler.setLevel(logging.DEBUG)  # Bu seviyeyi DEBUG olarak ayarla
-        
-        # Detaylı JSON log dosyası
-        json_handler = logging.FileHandler(
-            logs_path / 'detailed_bot.json',
+        # Dosya handler'ı ekle
+        # RotatingFileHandler kullanarak dosyanın üzerine yazılmasını sağla
+        file_handler = RotatingFileHandler(
+            filename=logs_path,
+            maxBytes=10*1024*1024,  # 10MB
+            backupCount=5,
             encoding='utf-8',
-            mode='a'  # Append modu
+            mode='a'  # 'w' yerine 'a' (append) kullan
         )
-        json_handler.setLevel(logging.DEBUG)
-        json_formatter = JsonFormatter()
-        json_handler.setFormatter(json_formatter)
-        logger.addHandler(json_handler)
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            '%Y-%m-%d %H:%M:%S'
+        ))
+        root_logger.addHandler(file_handler)
         
-        # Sadece hataların kaydedildiği hata log dosyası
-        error_handler = logging.FileHandler(
-            logs_path / 'errors.log',
-            encoding='utf-8'
-        )
-        error_handler.setLevel(logging.WARNING)
+        # Detaylı JSON dosya handler'ı (opsiyonel)
+        if detailed_logs_path:
+            detailed_logs_dir = detailed_logs_path.parent
+            detailed_logs_dir.mkdir(parents=True, exist_ok=True)
+            
+            json_handler = RotatingFileHandler(
+                filename=detailed_logs_path, 
+                maxBytes=10*1024*1024,  # 10MB
+                backupCount=5,
+                encoding='utf-8',
+                mode='a'
+            )
+            json_handler.setFormatter(JSONFormatter())
+            root_logger.addHandler(json_handler)
         
-        # Konsol işleyicisi
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(logging.INFO)
+        # Konsol handler'ı ekle
+        console_handler = logging.StreamHandler(sys.stderr)
+        console_handler.setFormatter(ColoredFormatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            '%Y-%m-%d %H:%M:%S'
+        ))
+        root_logger.addHandler(console_handler)
         
-        # Biçimlendiriciler
-        file_formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - [%(funcName)s] - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        
-        error_formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - [%(module)s.%(funcName)s:%(lineno)d] - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        
-        console_formatter = ColoredFormatter('%(message)s')
-        
-        file_handler.setFormatter(file_formatter)
-        error_handler.setFormatter(error_formatter)
-        console_handler.setFormatter(console_formatter)
-        
-        # İşleyicileri ekle
-        logger.addHandler(file_handler)
-        logger.addHandler(json_handler)
-        logger.addHandler(error_handler)
-        logger.addHandler(console_handler)
-        
-        # Telethon loglarını bastır
-        logging.getLogger('telethon').setLevel(logging.WARNING)
+        logger = logging.getLogger('telegram_bot')
+        logger.info("Logger başarıyla yapılandırıldı: %s", logs_path)
         
         return logger
 

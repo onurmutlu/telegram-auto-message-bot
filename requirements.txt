@@ -1,8 +1,19 @@
 telethon>=1.25.4
 python-dotenv>=0.19.2
 colorama>=0.4.4
-# keyboard kütüphanesini kaldırdık
-# asyncio zaten Python'un bir parçası, ayrıca yüklenmesi gerekmez
-# typing zaten Python'un bir parçası, ayrıca yüklenmesi gerekmez
-# pathlib zaten Python 3.4+ sürümlerinde mevcut
-# sqlite3 zaten Python'un bir parçası, ayrıca yüklenmesi gerekmez
+tabulate>=0.8.9
+
+# Test paketleri (opsiyonel)
+pytest>=7.0.0
+pytest-asyncio>=0.18.3
+pytest-cov>=3.0.0
+
+# Loglama için ilave paketler (opsiyonel)
+rich>=10.0.0
+
+# NOT: Aşağıdaki modüller Python ile birlikte gelir, ayrıca yüklemeye gerek yoktur
+# - asyncio (standart kütüphane)
+# - typing (standart kütüphane)
+# - pathlib (standart kütüphane, Python 3.4+)
+# - sqlite3 (standart kütüphane)
+# - json (standart kütüphane)

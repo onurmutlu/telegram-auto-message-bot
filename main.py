@@ -1,69 +1,79 @@
 """
-Telegram Auto Message Bot
-------------------------
-Version: 3.1
-Author: @siyahkare
-Description: Telegram gruplarına otomatik mesaj gönderen ve özel mesajları yöneten gelişmiş bot.
-License: Proprietary Commercial Software - All rights reserved
-Copyright (c) 2025 Arayiş Yazılım. Tüm hakları saklıdır.
-
-Bu yazılım, Arayiş Yazılım'ın özel mülkiyetindedir ve yalnızca lisanslı kullanıcılar tarafından,
-kiralama sözleşmesi şartları dahilinde kullanılabilir. Yazılımın herhangi bir şekilde kopyalanması,
-dağıtılması veya değiştirilmesi lisans sahibinin önceden yazılı izni olmadan yasaktır.
+Telegram Auto Message Bot - Ana program
 """
+import os
+import sys
 import asyncio
 import logging
-import sys
-from pathlib import Path
-from colorama import init, Fore, Style
-from datetime import datetime
 import argparse
 import traceback
-
+from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
+from colorama import Fore, Style, init
+from tabulate import tabulate
 
+# Proje modülleri
 from config.settings import Config
 from database.user_db import UserDatabase
 from bot.message_bot import MemberMessageBot
-from utils.logger import LoggerSetup
+from bot.utils.logger_setup import setup_logger, configure_console_logger, LoggerSetup
 
-init(autoreset=True)  # Colorama'yı başlat
+# Sabit değişkenler
+GROUP_LINKS = ["sohbetgrubum", "premiumpaylasim", "teknolojisohbet"]
 
-# Root logger yapılandırması
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+# Renkli çıktı desteğini ayarla
+init(autoreset=True)
+logger = logging.getLogger(__name__)
 
-# Geçici hata ayıklama için konsol handler
-console_debug = logging.StreamHandler(sys.stderr)
-console_debug.setLevel(logging.DEBUG)
-console_debug.setFormatter(logging.Formatter(
-    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-))
-logging.getLogger('').addHandler(console_debug)
+def is_terminal_support_color():
+    """Terminal renk desteğini tespit eder"""
+    # Terminal mi yoksa pipe mı?
+    if not sys.stdout.isatty():
+        return False
+    
+    # Çevre değişkenlerine bakarak destek kontrolü
+    term = os.environ.get('TERM', '')
+    if term == 'dumb' or 'NO_COLOR' in os.environ:
+        return False
+    
+    return True
 
 def parse_arguments():
     """Komut satırı argümanlarını ayrıştırır"""
     parser = argparse.ArgumentParser(description="Telegram Auto Message Bot")
     
-    parser.add_argument('--debug', action='store_true', help='Debug modunda çalıştır')
-    parser.add_argument('--reset-errors', action='store_true', help='Hata veren grupları sıfırla')
-    parser.add_argument('--optimize-db', action='store_true', help='Veritabanını optimize et')
-    parser.add_argument('--env', choices=['production', 'development'], default='production', 
+    parser.add_argument('-d', '--debug', action='store_true', help='Debug modunda çalıştır')
+    parser.add_argument('-r', '--reset-errors', action='store_true', help='Hata veren grupları sıfırla')
+    parser.add_argument('-o', '--optimize-db', action='store_true', help='Veritabanını optimize et')
+    parser.add_argument('-e', '--env', choices=['production', 'development'], default='production', 
                       help='Çalışma ortamı')
+    parser.add_argument('-b', '--backup', action='store_true', help='Başlangıçta veritabanı yedeği al')
     
     return parser.parse_args()
 
 def show_helper_info():
     """Bot çalıştırma öncesinde yardımcı bilgileri göster"""
+    tips = [
+        ["h", "Mevcut komutları gösterme"],
+        ["logs/", "Hata kayıtlarına erişim"],
+        ["Ctrl+C / q", "Güvenli kapatma"],
+        ["İnternet", "Stabil bağlantı gerekli"],
+        ["Limitler", "Mesaj gönderim ayarlarını düşük tutun"]
+    ]
+    
     print(f"\n{Fore.CYAN}=== HIZLI İPUÇLARI ==={Style.RESET_ALL}")
-    print(f"{Fore.GREEN}•{Style.RESET_ALL} Bot başladığında komut satırında 'h' yazarak mevcut komutları görebilirsiniz")
-    print(f"{Fore.GREEN}•{Style.RESET_ALL} Bot hata verirse 'logs/bot.log' ve 'logs/errors.log' dosyalarını kontrol edin")
-    print(f"{Fore.GREEN}•{Style.RESET_ALL} Uygulamayı Ctrl+C ya da 'q' komutuyla güvenli bir şekilde sonlandırın")
-    print(f"{Fore.GREEN}•{Style.RESET_ALL} İnternet bağlantınızın stabil olduğundan emin olun")
-    print(f"{Fore.GREEN}•{Style.RESET_ALL} Telegram API limitlerini aşmamak için mesaj gönderim ayarlarını düşük tutun\n")
+    print(tabulate(tips, headers=["Konu", "Açıklama"], tablefmt="simple"))
+    print()
+
+def print_banner():
+    """Program başlık bilgisini gösterir"""
+    print(f"{Fore.CYAN}╔══════════════════════════════════════════════╗")
+    print(f"{Fore.CYAN}║ {Fore.GREEN}TELEGRAM AUTO MESSAGE BOT v3.3{Fore.CYAN}                ║")
+    print(f"{Fore.CYAN}║ {Fore.YELLOW}Author: @siyahkare{Fore.CYAN}                            ║")
+    print(f"{Fore.CYAN}║ {Fore.RED}Ticari Ürün - Tüm Hakları Saklıdır © 2025{Fore.CYAN}      ║")
+    print(f"{Fore.CYAN}╚══════════════════════════════════════════════╝{Style.RESET_ALL}")
+    print(f"\nBu yazılım, SiyahKare Yazılım tarafından geliştirilmiş ticari bir ürünüdür.")
 
 async def main():
     """Ana uygulama başlatma fonksiyonu"""
@@ -74,8 +84,17 @@ async def main():
     load_dotenv()
     
     try:
+        # Renkli çıktı desteğini ayarla
+        init(autoreset=True, strip=not is_terminal_support_color())
+
         # Log ekleyelim
         logger = logging.getLogger('telegram_bot')
+        
+        # Konsol handler'ı ekle - yeni modülden al
+        console_handler = configure_console_logger(
+            level=logging.DEBUG if args.debug else logging.INFO
+        )
+        logging.getLogger('').addHandler(console_handler)
         
         # Yapılandırmayı yükle
         config = Config.load_config()
@@ -84,8 +103,8 @@ async def main():
         if args.env:
             config.environment = args.env
         
-        # Logger'ı ayarla
-        logger = LoggerSetup.setup_logger(config.logs_path)
+        # Logger'ı ayarla - config nesnesi ile
+        logger = LoggerSetup.setup_logger(config)
         
         # Başlık göster
         print_banner()
@@ -95,41 +114,37 @@ async def main():
         
         logger.info("🚀 Uygulama başlatılıyor...")
         
-        # Grup listesi
-        GROUP_LINKS = [
-            "premium_arayis",
-            "arayisgruba", 
-            "arayisplatin"
-        ]
+        # API Kimlik bilgilerini al
+        api_id, api_hash, phone = Config.load_api_credentials()
         
         # Veritabanını başlat
         user_db = UserDatabase(config.user_db_path)
         
         # Veritabanı optimizasyonu (opsiyonel)
         if args.optimize_db:
-            if user_db.optimize_database():
-                print(f"{Fore.GREEN}✅ Veritabanı optimize edildi{Style.RESET_ALL}")
+            user_db.optimize_database()
+            print(f"{Fore.GREEN}✅ Veritabanı optimize edildi{Style.RESET_ALL}")
         
-        # Uygulama başlangıç zamanını göster
+        # Başlangıç zamanını kaydet
         start_time = datetime.now().strftime("%H:%M:%S")
         logger.info(f"⏱️ Başlangıç zamanı: {start_time}")
         
-        # Bot örneği oluştur
+        # Mesajlaşma botunu oluştur
         bot = MemberMessageBot(
-            api_id=config.api_id,
-            api_hash=config.api_hash,
-            phone=config.phone,
+            api_id=api_id, 
+            api_hash=api_hash,
+            phone=phone,
             group_links=GROUP_LINKS,
             user_db=user_db,
             config=config,
             debug_mode=args.debug  # Debug modu argümandan al
         )
         
-        # Hata veren grupları sıfırla
+        # Hata gruplarını sıfırlama (opsiyonel)
         if args.reset_errors:
-            count = user_db.clear_all_error_groups()
-            print(f"{Fore.GREEN}✅ {count} hata veren grup sıfırlandı{Style.RESET_ALL}")
-            
+            cleared = user_db.clear_all_error_groups()
+            print(f"{Fore.GREEN}✅ {cleared} hata grubu temizlendi{Style.RESET_ALL}")
+        
         # Botu başlat
         await bot.start()
         
@@ -159,20 +174,7 @@ async def main():
         
     return 0  # Başarılı sonlanma kodu
 
-def print_banner():
-    """Program başlık bilgisini gösterir"""
-    banner = f"""
-{Fore.CYAN}╔══════════════════════════════════════════════════╗
-║  {Fore.GREEN}Telegram Auto Message Bot v3.1{Fore.CYAN}                 ║
-║  {Fore.YELLOW}Author: @siyahkare{Fore.CYAN}                            ║
-║  {Fore.WHITE}Telegram grupları için otomatik mesaj botu{Fore.CYAN}     ║
-║  {Fore.RED}Ticari Ürün - Tüm Hakları Saklıdır © 2025{Fore.CYAN}      ║
-╚══════════════════════════════════════════════════╝{Style.RESET_ALL}
-
-{Fore.YELLOW}UYARI:{Style.RESET_ALL} Bu yazılım, Arayiş Yazılım'ın lisanslı bir ticari ürünüdür.
-İzinsiz kullanım, kopyalama veya dağıtım yasal işlem gerektirir.
-"""
-    print(banner)
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Async olarak ana fonksiyonu çalıştır
+    exit_code = asyncio.run(main())
+    sys.exit(exit_code)
