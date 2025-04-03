@@ -1,3 +1,23 @@
+"""
+# ============================================================================ #
+# Dosya: test_user_db.py
+# Yol: /Users/siyahkare/code/telegram-bot/tests/test_user_db.py
+# İşlev: Telegram bot bileşeni
+#
+# Build: 2025-04-01-00:07:55
+# Versiyon: v3.4.0
+# ============================================================================ #
+#
+# Bu test modülü, user_db için birim testleri içerir:
+# - Temel işlevsellik testleri
+# - Sınır koşulları ve hata durumları
+# - Mock nesnelerle izolasyon
+# 
+# Kullanım: python -m pytest tests/test_user_db.py -v
+#
+# ============================================================================ #
+"""
+
 import pytest
 import os
 import tempfile

@@ -4,6 +4,120 @@
 
 Bu belge, Telegram Auto Message Bot'un tüm önemli değişikliklerini içerir.
 
+## [3.4.1] - 2025-04-02
+
+### Eklenen Özellikler
+- `UserService` sınıfı ile kullanıcı yönetiminin servis katmanına taşınması
+- `ServiceFactory` ve `ServiceManager` sınıfları ile merkezi servis yönetimi
+- Bot durum izleme paneli (`monitor_dashboard.py`) eklendi
+- Test mesajı gönderme aracı (`send_test_message.py`) eklendi
+- `check_groups.py` ile erişilebilir grupların testi eklendi
+- Bot'a debug modu eklendi: DEBUG=true ortam değişkeni ile aktifleşir
+
+### İyileştirmeler
+- Servis katmanı yapısı güçlendirildi ve daha modüler hale getirildi
+- Projenin yapısı düzenlendi, yardımcı araçlar tools/ dizinine taşındı
+- TelegramBot.enable_debug_mode() metodu ile detaylı debug çıktıları
+- Renkli terminal çıktıları ve tablo formatlaması iyileştirildi
+- ServiceManager ile servislerin güvenli başlatılması ve durdurulması sağlandı
+- Bot status komutu ile anlık servis durumları görüntülenebilir
+
+### Düzeltmeler
+- `'Config' object has no attribute 'API_ID'` hatası çözüldü
+- Property çakışmaları nedeniyle oluşan `can't set attribute` hatası düzeltildi
+- `NoModuleFoundError` hatalarını çözmek için import yolları düzeltildi
+- `requests` ve `colorama` bağımlılıkları requirements.txt'ye eklendi
+- Sonsuz Config yapılandırma döngüsü hatası giderildi
+- Debug botu düzgün çalışacak şekilde düzeltildi
+- Birden fazla main.py arasındaki çakışmalar çözüldü
+- Proje kök dizini import yoluna eklenerek modül çözünürlüğü düzeltildi
+
+### Yeniden Yapılandırma
+- Eski ve kullanılmayan legacy_handlers klasörü projeden temizlendi
+- Config import yapısı düzenlendi ve tutarlı hale getirildi
+- settings.py ve config.py arasındaki ilişki yeniden yapılandırıldı
+- API bilgilerine hem büyük harfli (API_ID) hem de küçük harfli (api_id) şekilde erişim sağlandı
+- Bot başlatma mantığı refactor edildi
+
+### Dokümantasyon
+- Bot durum izleme paneli için kapsamlı yardım eklendi
+- README.md güncellendi, yeni araçlar ve servis mimarisi eklendi
+- Kod içi açıklamalar daha detaylı ve tutarlı hale getirildi
+
+## [3.4.0] - 2025-04-01
+
+### Eklenen Özellikler
+- Yeni test modülü: `test_run_tests.py` ile test sürecinin kendisi de test edilebilir hale getirildi.
+- Gelişmiş raporlama sistemi ve renkli test çıktıları.
+- Zaman aşımı kontrolü ve otomatik test durdurma mekanizması.
+- Test sonuçlarını JSON formatında saklama ve analiz etme desteği.
+- Kolay test çalıştırılması için yeni `run_tests.py` betiği eklendi.
+- Zaman damgalı ayrıntılı test logları.
+- `debug_bot` modülü ile ayrı bir python-telegram-bot tabanlı hata izleme botu entegrasyonu.
+- `monitor.py` ile ana bot ve debug botun eş zamanlı başlatılması.
+- `TelegramBot.set_monitor_bot()` metodu ile ana bot ve debug bot arasında bağlantı kurma.
+- `ErrorHandler.log_error()` metodu ile hataları hem loglama hem de debug bota gönderme.
+
+### İyileştirmeler
+- Kod yapısının modülerleştirilmesi: servis katmanı uygulandı.
+- `DirectMessageService`, `MessageService` ve `ReplyService` sınıfları ayrı modüllere taşındı.
+- Test süitlerinin çalışma zamanı performansı iyileştirildi.
+- Log formatları standardize edildi ve tüm formatlarda tutarlılık sağlandı.
+- Kod kalitesi iyileştirmeleri: alt modüllere ayrılarak okunabilirlik artırıldı.
+- Test kapsamı %80'in üzerine çıkarıldı.
+- Legacy handlers yeni yapıya migrate edildi ve standartlaştırıldı.
+- `BotTasks` sınıfı ile görev yönetimi merkezileştirildi.
+- `TelegramBot` sınıfı merkezi bir yapıya kavuşturuldu ve `BaseBot` ile birleştirildi.
+- Şablon yükleme ve yönetimi iyileştirildi.
+- Hata yönetimi ve `ErrorHandler` sınıfı güncellendi.
+- Bot başlatma süreci iyileştirildi ve olay dinleme süreçleri düzenlendi.
+
+### Refactor
+- `core.py` sınıfı refactor edildi, görevler `tasks.py` dosyasına taşındı.
+- Sinyal işleme iyileştirildi ve tek bir yerde toplandı.
+- Kapanış işlemleri geliştirildi ve güvenli kapatma sağlandı.
+- Logger formatları standardize edildi ve `levellevelname` hatası düzeltildi.
+- Servis sınıfları arasında tutarlı bir arayüz oluşturuldu.
+- Bağımlılık enjeksiyonu ile test edilebilirlik artırıldı.
+- Asenkron işlemler için tutarlı bir model uygulandı.
+- `handlers` ve `services` katmanları arasındaki sorumluluklar netleştirildi.
+- `handlers/handlers.py` ve `handlers/message_handler.py` çakışması giderildi.
+- Grup mesajı gönderme işlevi `group_handler.py` içinde birleştirildi.
+
+### Düzeltmeler
+- `TestRunTests` sınıfındaki mock kullanım hataları düzeltildi.
+- Logger formatlarındaki tutarsızlıklar giderildi.
+- Testlerde çıkan 'NoneType' hatalarına karşı güvenli kod yapısı.
+- Test sonuçlarını depolama ve raporlama sorunları çözüldü.
+- Subprocess çağrıları daha güvenli hale getirildi.
+- Zaman aşımı ve `KeyboardInterrupt` durumlarında kaynaklar düzgün temizleniyor.
+- `handlers` klasörü yapısı düzeltildi ve gereksiz dosyalar temizlendi.
+- `ImportError: cannot import name 'MessageHandlers' from 'bot.handlers'` hatası giderildi.
+
+### Yeniden Yapılandırma
+- Legacy handlers klasöründeki dosyalar yeni yapıya taşındı.
+- `handlers` klasörü yeniden organize edildi.
+- `migration_report.md` ile taşıma işlemleri belgelendi.
+- Bot yapısı `ROADMAP340.md`'de belirtilen ilkelere göre yeniden düzenlendi.
+- `debug_bot` modülü ayrı bir klasöre taşındı ve namespace çakışmaları önlendi.
+
+### Cleanup
+- Gereksiz dosyalar temizlendi.
+- Kod yapısı düzenlendi ve modüler hale getirildi.
+- Eski `.bak` uzantılı dosyalar temizlendi.
+- Tutarsız yapılandırma formatları standartlaştırıldı.
+- Daha iyi tip kontrolü için type hinting kullanımı yaygınlaştırıldı.
+- Kodun okunabilirliği artırıldı.
+- Gereksiz servis sınıfları kaldırıldı ve işlevler handler sınıflarına taşındı.
+
+### Dokümantasyon
+- `ROADMAP340.md` ile gelecek geliştirmelerin yol haritası eklendi.
+- Kapsamlı test dokümantasyonu eklendi.
+- Proje yapısı ve mimarisi belgelendi.
+- Test koşulları ve test sonuçlarının yorumlanması için kılavuz eklendi.
+- `README.md` dosyası güncellendi ve `debug_bot` modülü hakkında bilgi eklendi.
+- Kod içi docstringler güncellendi ve eksik açıklamalar tamamlandı.
+
 ## [3.3.1] - 2025-03-26
 
 ### Düzeltmeler

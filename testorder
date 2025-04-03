@@ -1,0 +1,13 @@
+# Temel testler
+python -m tests.run_tests -t test_config
+python -m tests.run_tests -t test_logger
+
+# Servis testleri
+python -m tests.run_tests -t test_dm_service
+python -m tests.run_tests -t test_message_service
+python -m tests.run_tests -t test_reply_service
+python -m tests.run_tests -t test_services
+python -m tests.run_tests -t test_bot
+
+# Entegrasyon testleri (en son çalıştırılmalı)
+python -m tests.run_tests -t test_integration

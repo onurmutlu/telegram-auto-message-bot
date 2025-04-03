@@ -1,4 +1,20 @@
-"""Çalışma zamanı monitör sınıfı"""
+"""
+# ============================================================================ #
+# Dosya: monitor.py
+# Yol: /Users/siyahkare/code/telegram-bot/utils/monitor.py
+# İşlev: Telegram bot bileşeni
+#
+# Build: 2025-04-01-00:07:55
+# Versiyon: v3.4.0
+# ============================================================================ #
+#
+# Bu modül, Telegram bot uygulamasının bileşenlerinden biridir.
+# - İlgili servislere entegrasyon
+# - Hata yönetimi ve loglama
+# - Asenkron işlem desteği
+#
+# ============================================================================ #
+"""
 import time
 from datetime import datetime, timedelta
 import logging

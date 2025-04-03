@@ -1,3 +1,23 @@
+"""
+# ============================================================================ #
+# Dosya: test_message_loading.py
+# Yol: /Users/siyahkare/code/telegram-bot/tests/test_message_loading.py
+# İşlev: Telegram bot bileşeni
+#
+# Build: 2025-04-01-00:07:55
+# Versiyon: v3.4.0
+# ============================================================================ #
+#
+# Bu test modülü, message_loading için birim testleri içerir:
+# - Temel işlevsellik testleri
+# - Sınır koşulları ve hata durumları
+# - Mock nesnelerle izolasyon
+# 
+# Kullanım: python -m pytest tests/test_message_loading.py -v
+#
+# ============================================================================ #
+"""
+
 #!/usr/bin/env python3
 # test_message_loading.py
 

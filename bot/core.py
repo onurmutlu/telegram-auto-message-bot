@@ -1,74 +1,123 @@
 """
-Telegram botu çekirdek işlevleri
+# ============================================================================ #
+# Dosya: core.py
+# Yol: /Users/siyahkare/code/telegram-bot/bot/core.py
+# İşlev: Telegram Bot Merkezi Sınıfı
+#
+# Amaç: Telegram bot uygulamasının temel işlevlerini yönetmek ve koordine etmek.
+#       Bu sınıf, Telegram API'ye bağlantı, oturum yönetimi, grup yönetimi, otomatik mesajlaşma,
+#       olay dinleme, hata yönetimi, asenkron görev yönetimi ve kullanıcı arayüzü gibi temel
+#       bileşenleri içerir.
+#
+# Build: 2025-04-01-05:30:00
+# Versiyon: v3.4.0
+# ============================================================================ #
+#
+# Bu modül, Telegram bot uygulamasının merkezi sınıfını içerir:
+# - Telegram API'ye bağlantı ve oturum yönetimi
+# - Grup yönetimi ve otomatik mesajlaşma altyapısı
+# - Olay dinleme ve işleme mekanizmaları 
+# - Hata yönetimi ve akıllı geri çekilme stratejileri
+# - Asenkron işlem desteği ve görev yönetimi
+# - Kullanıcı arayüzü ve konsol komutları
+#
+# © 2025 SiyahKare Yazılım - Tüm Hakları Saklıdır
+# ============================================================================ #
 """
 import asyncio
-import signal
-import random
 import logging
-import threading
-from datetime import datetime
-from pathlib import Path
 import os
+import signal
 import sys
+import threading
+import random
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Set, Dict, Any, Optional, Union
-import json
 
-from telethon import TelegramClient, errors
+from telethon import TelegramClient, errors, events
 from colorama import Fore, Style, init
 from tabulate import tabulate
 
+# Bot modüllerini import et
+from bot.handlers.group_handler import GroupHandler
+from bot.handlers.message_handler import MessageHandler
+from bot.handlers.user_handler import UserHandler
 from bot.utils.error_handler import ErrorHandler
-from bot.handlers import MessageHandlers
-from bot.tasks import BotTasks
 from database.user_db import UserDatabase
 from config.settings import Config
+from bot.tasks import BotTasks  # BotTasks import edildi
+from bot.services.group_service import GroupService as GroupMessageService
+from bot.services.dm_service import DirectMessageService
+from bot.services.reply_service import ReplyService as AutoReplyService
+from bot.services.user_service import UserService
+from bot.handlers.handlers import MessageHandlers
+from bot.services.service_factory import ServiceFactory
+from bot.services.service_manager import ServiceManager
 
+# Colorama başlat
 init(autoreset=True)
 logger = logging.getLogger(__name__)
 
 class TelegramBot:
     """
-    Telegram gruplarına otomatik mesaj gönderen ve özel mesajları yöneten bot
+    Telegram bot merkezi sınıfı
+    
+    Tüm bot işlevlerini ve özelliklerini içerir:
+    - Telethon client oluşturma ve yönetme
+    - Grup mesajlama ve özel mesajlaşma
+    - Olay dinleme ve işleme
+    - Hata yönetimi ve loglama
+    - Kullanıcı arayüzü
     """
     def __init__(self, api_id: int, api_hash: str, phone: str, 
-                 group_links: List[str], user_db: UserDatabase, config=None, debug_mode: bool = False):
-        """Bot sınıfını başlat"""
+                 group_links: List[str], user_db: UserDatabase, config=None, debug_mode: bool = False,
+                 admin_groups: List[str] = None, target_groups: List[str] = None):
+        """
+        Bot merkezi sınıfını başlatır
+        """
         # Temel ayarlar
         self.api_id = api_id
         self.api_hash = api_hash
         self.phone = phone
-        self.group_links = group_links
+        self.group_links = group_links  # group_links'i ekleyin
         self.db = user_db
         self.config = config or Config.load_config()
-        self.session_file = Path(self.config.session_file)
+        self.admin_groups = admin_groups or []
+        self.target_groups = target_groups or []
+        
+        # Session dosya yolu
+        self.session_file = getattr(self.config, "SESSION_PATH", "session/member_session")
         
         # Durum değişkenleri
         self.is_running = False
         self.is_paused = False
+        self.debug_mode = debug_mode
         self.processed_groups: Set[int] = set()
         self.responded_users: Set[int] = set()
         self.sent_count = 0
-        self.start_time = None
+        self._start_time = datetime.now().timestamp()
+        self.start_time = None  # Başlangıç zamanı (başlatıldığında atanacak)
         self.last_message_time = None
         
-        # Aktivite takibi için eklenen değişkenler
-        self.displayed_users = set()  # Gösterilen kullanıcıları takip et
-        self.user_activity_cache = {}  # Kullanıcı aktivitelerini önbellekte tut
-        self.user_activity_explained = False  # Aktivite açıklaması gösterildi mi
+        # Aktivite takibi için değişkenler
+        self.displayed_users = set()
+        self.user_activity_cache = {}
+        self.user_activity_explained = False
         
-        # Tekrarlanan hata takibi
-        self.error_message_cache = {}  # Son hata mesajları ve sayıları
-        self.flood_wait_active = False  # FloodWait durumu aktif mi
-        self.flood_wait_end_time = None  # FloodWait'in sona ereceği zaman
+        # Hata takibi
+        self.error_message_cache = {}
+        self.flood_wait_active = False
+        self.flood_wait_end_time = None
         
-        # Durdurmak ve duraklatmak için güçlendirilmiş mekanizmalar
+        # Asenkron kontrol mekanizmaları
         self._shutdown_event = asyncio.Event()
-        self._pause_event = asyncio.Event()  # Duraklatma için yeni event
+        self._pause_event = asyncio.Event()
         self._cleanup_lock = threading.Lock()
         self._force_shutdown_flag = False
         
         # Timeout değerleri
-        self.shutdown_timeout = 10  # Saniye cinsinden görevlerin kapanması için bekleme süresi
+        self.shutdown_timeout = 10
         
         # Hata yönetimi
         self.error_counter = {}
@@ -78,17 +127,17 @@ class TelegramBot:
         # Aktif görevler listesi
         self.active_tasks = []
         
-        # Rate limiting için parametreler
+        # Rate limiting parametreleri
         self.pm_delays = {
             'min_delay': 60,     # Min bekleme süresi (saniye)
             'max_delay': 120,    # Max bekleme süresi (saniye)
             'burst_limit': 3,    # Art arda gönderim limiti
             'burst_delay': 600,  # Burst limit sonrası bekleme (10 dk)
             'hourly_limit': 10,  # Saatlik maksimum mesaj
-            'davet_interval': 30  # Dakika cinsinden davet aralığı (daha sık)
+            'davet_interval': 30 # Dakika cinsinden davet aralığı
         }
         
-        # Rate limiting için durum takibi
+        # Rate limiting durum takibi
         self.pm_state = {
             'burst_count': 0,
             'hourly_count': 0,
@@ -97,11 +146,11 @@ class TelegramBot:
             'consecutive_errors': 0
         }
         
-        # Debug modu
-        self.debug_mode = debug_mode
-        
         # Terminal çıktı formatları
         self.terminal_format = {
+            'info': f"{Fore.CYAN}[INFO]{Style.RESET_ALL} {{}}",
+            'warning': f"{Fore.YELLOW}[WARNING]{Style.RESET_ALL} {{}}",
+            'error': f"{Fore.RED}[ERROR]{Style.RESET_ALL} {{}}",
             'user_activity_new': f"{Fore.CYAN}👁️ Yeni kullanıcı aktivitesi: {{}}{Style.RESET_ALL}",
             'user_activity_exists': f"{Fore.BLUE}🔄 Tekrar aktivite: {{}}{Style.RESET_ALL}",
             'user_activity_reappear': f"{Fore.GREEN}🔙 Uzun süre sonra görüldü: {{}}{Style.RESET_ALL}",
@@ -118,11 +167,19 @@ class TelegramBot:
             'flood_wait': "Telegram API'den çok fazla istek yaptığınız için bekleme süresi uygulanıyor"
         }
         
-        # Client nesnesini oluştur
+        # Session dizini oluştur
+        session_path = Path(self.session_file).parent
+        if not session_path.exists():
+            session_path.mkdir(parents=True, exist_ok=True)
+        
+        # Client nesnesi
         self.client = TelegramClient(
             str(self.session_file),
             self.api_id, 
             self.api_hash,
+            device_model="Telegram Auto Bot",
+            system_version="Python 3.9",
+            app_version="v3.4.0",
             connection_retries=None,  # Sonsuz yeniden deneme
             retry_delay=1,            # 1 saniye bekle
             auto_reconnect=True,      # Otomatik yeniden bağlanma
@@ -131,594 +188,220 @@ class TelegramBot:
         
         # Alt bileşenler
         self.error_handler = ErrorHandler(self)
-        self.message_handlers = None  # Daha sonra init_components'da oluşturulacak
-        self.tasks = None  # Daha sonra init_components'da oluşturulacak
         
-    def init_components(self):
-        """Alt bileşenleri başlat - sınıf referans çevrimini önlemek için"""
+        # Handler ve servis nesneleri
+        self.message_handlers = None
+        self.group_handler = None
+        self.message_handler = None
+        self.user_handler = None
+        self.bot_tasks = None
+        
+        # Şablon koleksiyonları
+        self.messages = []
+        self.invite_templates = {}
+        self.response_templates = {}
+        self.invite_messages = []
+        self.invite_outros = []
+        self.redirect_messages = []
+        self.flirty_responses = []
+        
+        # Sinyal işleyicileri
+        self._setup_signal_handlers()
+        
+        self.monitor_bot = None
+        
+        # Servis fabrikası ve yöneticisi
+        self.service_factory = ServiceFactory(self.client, self.config, self.db, shutdown_event=self._shutdown_event)
+        self.service_manager = ServiceManager(self.service_factory)
+        
+        # Servisler için hazırlık - merkezi servis havuzu
+        self.services = {}
+    
+    def set_monitor_bot(self, monitor_bot):
+        """
+        Debug/izleme botunu TelegramBot'a bağlar.
+        
+        Args:
+            monitor_bot: İzleme botu örneği
+        """
+        self.monitor_bot = monitor_bot
+        logger.info("İzleme botu bağlandı")
+    
+    def send_debug_message(self, message):
+        """Önemli mesajları izleme botuna gönder"""
+        if self.monitor_bot:
+            # Asenkron olarak mesaj gönder
+            asyncio.create_task(self.monitor_bot.send_message_to_devs(message))
+        
+    def init_handlers(self):
+        """Handler ve servis nesnelerini başlatır"""
+        # Handler nesnelerini oluştur
         self.message_handlers = MessageHandlers(self)
-        self.tasks = BotTasks(self)
-    
-    async def start(self):
-        """Botu başlatır"""
-        self.is_running = True
-        self.start_time = datetime.now()
-        tasks = []  # Görev listesi
+        self.group_handler = GroupHandler(self)
+        self.message_handler = MessageHandler(self)
+        self.user_handler = UserHandler(self)
+        self.bot_tasks = BotTasks(self)
+
+        # /start komutu için handler ekle
+        self.client.add_event_handler(self.start_command, events.NewMessage(pattern='(?i)/start'))
+        
+    async def start_command(self, event):
+        """
+        /start komutunu işler ve kullanıcı ID'sini loglar.
+        """
+        user_id = event.message.sender_id
+        logger.info(f"/start komutu alındı. Kullanıcı ID: {user_id}")
+        await event.respond(f"Merhaba! Kullanıcı ID'niz: {user_id}")
+        
+    # Bot sınıfının ana metodları
+    async def start(self, interactive=True):
+        """Bot'u başlatır ve Telegram'a bağlanır."""
+        logger.info("Bot başlatılıyor...")
         
         try:
-            # Alt bileşenleri başlat
-            self.init_components()
+            # Telegram'a bağlan
+            await self.client.connect()
             
-            # Sinyal işleyicileri ayarla
-            self._setup_signal_handlers()
-            
-            # Temizleme işaretini sıfırla
-            self._shutdown_event.clear()
-            
-            # Mesaj şablonlarını yükle
-            self._load_message_templates()
-            
-            # Veritabanından hata veren grupları yükle
-            self._load_error_groups()
-            
-            # Client başlat
-            await self.client.start(phone=self.phone)
-            logger.info("🚀 Bot aktif edildi!")
-            
-            # Grup hata kayıtlarını yönet
-            await self.tasks.manage_error_groups()
-            
-            # Mesaj işleyicileri ayarla - önemli: diğer görevlerden önce!
-            self.message_handlers.setup_handlers()
-            
-            # Periyodik temizleme görevi
-            cleanup_task = asyncio.create_task(self.tasks.periodic_cleanup())
-            tasks.append(cleanup_task)
-            
-            # Komut dinleyici görevi
-            command_task = asyncio.create_task(self.tasks.command_listener())
-            tasks.append(command_task)
-            
-            # Grup mesaj görevi - öncelikli
-            group_task = asyncio.create_task(self.tasks.process_group_messages())
-            tasks.append(group_task)
-            
-            # Özel davet görevi - daha sık çalışacak
-            invite_task = asyncio.create_task(self.tasks.process_personal_invites())
-            tasks.append(invite_task)
-            
-            # Aktivite ve açıklamalar
-            if not self.user_activity_explained:
-                # İlk başlangıçta açıklamalar göster
-                self._show_explanations()
-                self.user_activity_explained = True
-            
-            # Görevleri aktif olarak kaydet
-            self.active_tasks = tasks
-            
-            # Ana görevleri bekle
-            await asyncio.gather(*tasks, return_exceptions=True)
-            
-        except asyncio.CancelledError:
-            logger.info("Bot görevleri iptal edildi")
-        except Exception as e:
-            logger.error(f"Bot çalışma hatası: {str(e)}", exc_info=True)
-        finally:
-            # İşaret olayını ayarla - diğer görevlerin durmasını sağlar
-            self._shutdown_event.set()
-            
-            # Kapanış işlemleri
-            await self._cleanup_on_exit(tasks)
-    
-    def _show_explanations(self):
-        """Kullanıcıya konsol mesajlarının açıklamalarını göster"""
-        print(f"\n{Fore.CYAN}=== KONSOL MESAJLARI AÇIKLAMALARI ==={Style.RESET_ALL}")
-        print(f"{Fore.GREEN}👁️ Yeni kullanıcı aktivitesi:{Style.RESET_ALL} Henüz veritabanında olmayan yeni bir kullanıcı")
-        print(f"{Fore.BLUE}🔄 Tekrar aktivite:{Style.RESET_ALL} Veritabanında olan ve yakın zamanda görülmüş kullanıcı")
-        print(f"{Fore.GREEN}🔙 Uzun süre sonra görüldü:{Style.RESET_ALL} Veritabanında olan ancak uzun süredir görülmeyen kullanıcı")
-        print(f"{Fore.MAGENTA}📡 Telethon güncelleme:{Style.RESET_ALL} Telegram API'den gelen grup güncellemeleri")
-        print(f"{Fore.YELLOW}⏳ FloodWait hatası:{Style.RESET_ALL} Telegram API rate limiti, belirtilen süre bekleniyor")
-        print(f"{Fore.RED}❌ Hata mesajları:{Style.RESET_ALL} Tekrarlayan hatalar için sayaç gösterilir\n")
-    
-    async def _cleanup_on_exit(self, tasks):
-        """Çıkış sırasında temizlik işlemleri"""
-        # Kilitleme ile çoklu temizlemeleri önle
-        with self._cleanup_lock:
-            if not self.is_running:
-                return  # Zaten temizlendi
-                
-            self.is_running = False
-            logger.info("Bot kapatılıyor...")
-            
-            # Tüm görevleri iptal et
-            for task in tasks:
-                if task and not task.done() and not task.cancelled():
-                    task.cancel()
+            # Oturum yetkilendirilmiş mi?
+            if not await self.client.is_user_authorized():
+                if interactive:
+                    # Kod isteği gönder
+                    await self.client.send_code_request(self.phone)
+                    # (kullanıcıdan telefon kodu alınır)
+                    # ...
+                else:
+                    raise Exception("Telegram hesabı yetkilendirilmemiş ve interaktif mod kapalı")
                     
-            # Görevlerin iptalinin tamamlanması için kısa bir süre bekle
-            await asyncio.sleep(1)
+            # Bot'u çalışır olarak işaretle
+            self.is_running = True
+            self._start_time = datetime.now().timestamp()
             
-            # Client nesnesini kapat
-            if self.client and self.client.is_connected():
-                await self.client.disconnect()
-                logger.info("Telethon bağlantısı kapatıldı")
+            # Olay işleyicilerini kaydet
+            self._register_event_handlers()
             
-            # İstatistikleri göster
-            self._show_final_stats()
-    
-    def _show_final_stats(self):
-        """Kapatılırken istatistikleri göster"""
-        try:
-            if not self.start_time:
-                return
-                
-            uptime = datetime.now() - self.start_time
-            hours, remainder = divmod(uptime.total_seconds(), 3600)
-            minutes, seconds = divmod(remainder, 60)
-            uptime_str = f"{int(hours)}:{int(minutes):02}:{int(seconds):02}"
+            # Tek bir yerde servis başlatma
+            await self.init_services()
             
-            # Veritabanı istatistikleri
-            try:
-                stats = self.db.get_database_stats()
-            except Exception:
-                stats = {'total_users': 'N/A', 'invited_users': 'N/A'}
-            
-            # Tablo verilerini hazırla
-            print(f"\n{Fore.CYAN}=== BOT ÇALIŞMA İSTATİSTİKLERİ ==={Style.RESET_ALL}")
-            
-            stats_table = [
-                ["Çalışma süresi", uptime_str],
-                ["Toplam gönderilen mesaj", self.sent_count],
-                ["Hata veren grup sayısı", len(self.error_groups)],
-                ["Toplam kullanıcı sayısı", stats['total_users']],
-                ["Davet edilen kullanıcı", stats['invited_users']]
-            ]
-            
-            print(tabulate(stats_table, headers=["Metrik", "Değer"], tablefmt="grid"))
+            logger.info("Bot başarıyla başlatıldı!")
         except Exception as e:
-            logger.error(f"İstatistik gösterme hatası: {str(e)}")
-    
-    def _load_message_templates(self):
-        """Mesaj şablonlarını JSON dosyalarından yükler"""
-        try:
-            # Grup mesajlarını yükle
-            messages_data = Config.load_messages()
-            
-            # Doğrudan liste formatı ile çalış
-            if isinstance(messages_data, list):
-                self.messages = messages_data
-            else:
-                # Geriye uyumluluk için get() ile çalış
-                self.messages = messages_data if isinstance(messages_data, list) else []
-            
-            # Davet mesajlarını yükle
-            invites_data = Config.load_invites()
-            self.invite_messages = invites_data.get('invites', [])
-            self.invite_outros = invites_data.get('invites_outro', [])
-            self.redirect_messages = invites_data.get('redirect_messages', [])
-            
-            # Flörtöz yanıtları yükle
-            responses_data = Config.load_responses()
-            self.flirty_responses = responses_data.get('flirty_responses', [])
-            
-            logger.info("Mesaj şablonları yüklendi")
-        except Exception as e:
-            logger.error(f"Mesaj şablonları yükleme hatası: {str(e)}")
-            # Varsayılan değerler
-            self.messages = ["Merhaba! 👋", "Nasılsınız? 🌟"]
-            self.invite_messages = ["Bizim gruba da beklerim: t.me/{}"]
-            self.invite_outros = ["\n\nDiğer gruplarımız da burada 👇\n"]
-            self.redirect_messages = ["Gruplarda konuşalım, özelden konuşmayalım."]
-            self.flirty_responses = ["Teşekkür ederim! 😊"]
-    
-    def create_invite_message(self) -> str:
-        """Davet mesajı oluşturur"""
-        # Rastgele davet mesajı ve outro seç
-        random_invite = random.choice(self.invite_messages)
-        outro = random.choice(self.invite_outros)
+            logger.error(f"Bot başlatılamadı: {e}")
+            await self._safe_shutdown()
+            raise
+
+    async def _authenticate_user(self):
+        """Telegram'da yetkilendirme işlemi"""
+        logger.info("Telegram doğrulaması başlatılıyor...")
+        print(f"{Fore.YELLOW}Telegram doğrulama kodu gerekli!{Style.RESET_ALL}")
         
-        # Grup bağlantılarını oluştur
-        group_links = "\n".join([f"• t.me/{link}" for link in self.group_links])
+        # Doğrulama kodu gönder
+        await self.client.send_code_request(self.phone)
         
-        # Mesajı formatla
-        return f"{random_invite.format(self.group_links[0])}{outro}{group_links}"
-    
-    def _load_error_groups(self):
-        """Veritabanından hata veren grupları yükler"""
-        error_groups = self.db.get_error_groups()
-        for group_id, group_title, error_reason, _, _ in error_groups:
-            self.error_groups.add(group_id)
-            self.error_reasons[group_id] = error_reason
-            
-        if self.error_groups:
-            logger.info(f"{len(self.error_groups)} adet hata veren grup yüklendi")
-    
-    def mark_error_group(self, group, reason: str) -> None:
-        """Hata veren grubu işaretler"""
-        self.error_groups.add(group.id)
-        self.error_reasons[group.id] = reason
-        logger.warning(f"⚠️ Grup devre dışı bırakıldı - {group.title}: {reason}")
-    
-    async def interruptible_sleep(self, seconds):
-        """
-        Kesintiye uğrayabilen gelişmiş bekleme fonksiyonu
-        Bot kapatılırsa veya duraklatılırsa hemen yanıt verir
-        """
-        step = 0.5  # Yarım saniye adımlarla (daha hızlı yanıt)
-        for _ in range(int(seconds / step)):
-            # Kapatma kontrolü
-            if not self.is_running or self._shutdown_event.is_set():
-                logger.debug("Interruptible sleep: Shutdown detected")
-                return
-                
-            # Duraklatma kontrolü
-            if self.is_paused:
-                logger.debug("Interruptible sleep: Pause detected")
-                await self.check_paused()
-                
-            await asyncio.sleep(step)
+        # Kullanıcıdan kodu iste
+        code = input(f"{Fore.CYAN}Telefonunuza gelen kodu girin:{Style.RESET_ALL} ")
         
-        # Kalan süre için (0-0.5 saniye arası)
-        remainder = seconds % step
-        if remainder > 0 and self.is_running and not self._shutdown_event.is_set():
-            if not self.is_paused:
-                await asyncio.sleep(remainder)
-            else:
-                await self.check_paused()
-    
-    async def smart_delay(self) -> None:
-        """Gelişmiş akıllı gecikme sistemi"""
         try:
-            current_time = datetime.now()
-            
-            # Saatlik limit sıfırlama
-            if (current_time - self.pm_state['hour_start']).total_seconds() >= 3600:
-                self.pm_state['hourly_count'] = 0
-                self.pm_state['hour_start'] = current_time
-                logger.debug("Saatlik sayaç sıfırlandı")
-            
-            # Ardışık hata oranına göre gecikme artışı
-            if self.pm_state['consecutive_errors'] > 0:
-                # Her ardışık hata için gecikmeyi iki kat artır (exp backoff)
-                error_delay = min(300, 5 * (2 ** self.pm_state['consecutive_errors']))
-                logger.info(f"⚠️ {self.pm_state['consecutive_errors']} ardışık hata nedeniyle {error_delay} saniye ek bekleme")
-                await self.interruptible_sleep(error_delay)
-            
-            # Burst kontrolü - art arda gönderim sınırı
-            if self.pm_state['burst_count'] >= self.pm_delays['burst_limit']:
-                logger.info(f"⏳ Art arda gönderim limiti aşıldı: {self.pm_delays['burst_delay']} saniye bekleniyor")
-                await self.interruptible_sleep(self.pm_delays['burst_delay'])
-                self.pm_state['burst_count'] = 0
-            
-            # Son mesajdan bu yana geçen süre
-            if self.pm_state['last_pm_time']:
-                time_since_last = (current_time - self.pm_state['last_pm_time']).total_seconds()
-                min_delay = self.pm_delays['min_delay']
-                
-                # Henüz minimum süre geçmemişse bekle
-                if time_since_last < min_delay:
-                    wait_time = min_delay - time_since_last
-                    logger.debug(f"Son mesajdan bu yana {time_since_last:.1f}s geçti, {wait_time:.1f}s daha bekleniyor")
-                    await self.interruptible_sleep(wait_time)
-            
-            # Doğal görünmesi için rastgele gecikme
-            human_delay = random.randint(3, 10)  # İnsan gibi yazma gecikmesi
-            await self.interruptible_sleep(human_delay)
-            
-        except Exception as e:
-            self.error_handler.log_error("Akıllı gecikme hatası", str(e))
-            # Hata durumunda güvenli varsayılan bekleme
-            await self.interruptible_sleep(60)
-    
-    async def send_personal_message(self, user_id: int, message: str) -> bool:
-        """Kullanıcıya özel mesaj gönderir"""
-        try:
-            # Shutdown kontrolü
-            if self._shutdown_event.is_set():
-                return False
-                
-            # Akıllı gecikme uygula
-            await self.smart_delay()
-            
-            # Mesaj gönder
-            await self.client.send_message(user_id, message)
-            
-            # İstatistikleri güncelle
-            self.pm_state['burst_count'] += 1
-            self.pm_state['hourly_count'] += 1
-            self.pm_state['consecutive_errors'] = 0
-            self.pm_state['last_pm_time'] = datetime.now()
-            
-            return True
-            
-        except errors.FloodWaitError as e:
-            self.error_handler.handle_flood_wait(
-                "FloodWaitError", 
-                f"Özel mesaj için {e.seconds} saniye bekleniyor",
-                {'wait_time': e.seconds}
-            )
-            await asyncio.sleep(e.seconds)
-            self.pm_state['consecutive_errors'] += 1
-        except Exception as e:
-            self.error_handler.log_error("Özel mesaj hatası", str(e))
-            self.pm_state['consecutive_errors'] += 1
-            await asyncio.sleep(30)
-            
-        return False
-    
-    async def invite_user(self, user_id: int, username: Optional[str]) -> bool:
-        """Kullanıcıya özel davet mesajı gönderir"""
-        try:
-            # Shutdown kontrolü
-            if self._shutdown_event.is_set():
-                logger.debug("Bot kapatılıyor, davet işlemi iptal")
-                return False
-                
-            # Kullanıcı bilgisini log
-            user_info = f"@{username}" if username else f"ID:{user_id}"
-            
-            # Daha önce davet edilmiş mi?
-            if self.db.is_invited(user_id) or self.db.was_recently_invited(user_id, 4):
-                print(self.terminal_format['user_already_invited'].format(user_info))
-                logger.debug(f"Zaten davet edilmiş kullanıcı atlandı: {user_info}")
-                return False
-            
-            logger.debug(
-                f"Kullanıcı davet ediliyor: {user_info}",
-                extra={
-                    'user_id': user_id,
-                    'username': username
-                }
-            )
-            
-            # Davet mesajını oluştur ve gönder
-            message = self.create_invite_message()
-            await self.client.send_message(user_id, message)
-            
-            # Veritabanını güncelle
-            self.db.mark_as_invited(user_id)
-            
-            # Başarılı işlem logu
-            logger.info(
-                f"Davet başarıyla gönderildi: {user_info}",
-                extra={
-                    'user_id': user_id,
-                    'username': username,
-                    'invite_time': datetime.now().strftime('%H:%M:%S')
-                }
-            )
-            
-            # Konsol çıktısı
-            print(self.terminal_format['user_invite_success'].format(user_info))
-            
-            return True
-            
-        except errors.FloodWaitError as e:
-            # Flood Wait hatası
-            self.pm_state['consecutive_errors'] += 1
-            wait_time = e.seconds + random.randint(10, 30)
-            
-            print(self.terminal_format['user_invite_fail'].format(user_info, f"FloodWait: {wait_time}s"))
-            
-            self.error_handler.handle_flood_wait(
-                "FloodWaitError",
-                f"Kullanıcı davet için {wait_time} saniye bekleniyor ({user_info})",
-                {'wait_time': wait_time}
-            )
-            await asyncio.sleep(wait_time)
-            return False
-            
-        except (errors.UserIsBlockedError, errors.UserIdInvalidError, errors.PeerIdInvalidError) as e:
-            # Kalıcı hatalar - bu kullanıcıyı işaretleyerek atlayabiliriz
-            print(self.terminal_format['user_invite_fail'].format(user_info, f"Kalıcı hata: {e.__class__.__name__}"))
-            
-            self.error_handler.log_error(
-                "Davet kalıcı hata",
-                f"{user_info} - {str(e)}",
-                {
-                    'error_type': e.__class__.__name__,
-                    'user_id': user_id,
-                    'username': username,
-                    'action': 'kalıcı_engel_işaretlendi'
-                }
-            )
-            # Kullanıcıyı veritabanında işaretle
-            self.db.mark_user_blocked(user_id)
-            return False
-            
-        except Exception as e:
-            # Diğer hatalar
-            self.pm_state['consecutive_errors'] += 1
-            print(self.terminal_format['user_invite_fail'].format(user_info, f"Hata: {e.__class__.__name__}"))
-            
-            self.error_handler.log_error(
-                "Davet hatası",
-                f"{user_info} - {str(e)}",
-                {
-                    'user_id': user_id,
-                    'username': username
-                }
-            )
-            await asyncio.sleep(30)  # Genel hata durumunda bekle
-            return False
-            
-    def _setup_signal_handlers(self):
-        """Sinyal işleyicileri ayarla"""
-        # Sinyal işleyicileri (Ctrl+C, Terminate)
-        try:
-            # Unix/Linux/macOS sinyalleri
-            if hasattr(signal, 'SIGTERM'):
-                signal.signal(signal.SIGTERM, self._signal_handler)
-            if hasattr(signal, 'SIGINT'):
-                signal.signal(signal.SIGINT, self._signal_handler)
-                
-            # Windows için Python KeyboardInterrupt ele alır
-        except Exception as e:
-            logger.error(f"Sinyal işleyici ayarlama hatası: {str(e)}")
-    
-    def _signal_handler(self, sig, frame):
-        """Sinyal işleyicisi"""
-        signal_name = "SIGTERM" if sig == signal.SIGTERM else "SIGINT" if sig == signal.SIGINT else str(sig)
-        print(f"\n{Fore.YELLOW}⚠️"
-              f" {signal_name} sinyali alındı, bot kapatılıyor...{Style.RESET_ALL}")
-        
-        # Kapatma işlemini başlat
-        self.shutdown()
-    
+            # Doğrulama kodu ile giriş yap
+            await self.client.sign_in(self.phone, code)
+            print(f"{Fore.GREEN}✅ Telegram doğrulaması başarılı!{Style.RESET_ALL}")
+        except errors.SessionPasswordNeededError:
+            # İki adımlı doğrulama gerekiyor
+            print(f"{Fore.YELLOW}📱 İki faktörlü doğrulama etkin!{Style.RESET_ALL}")
+            password = input(f"{Fore.CYAN}Telegram hesap şifrenizi girin:{Style.RESET_ALL} ")
+            await self.client.sign_in(password=password)
+            print(f"{Fore.GREEN}✅ İki faktörlü doğrulama başarılı!{Style.RESET_ALL}")
+
     def shutdown(self):
         """Bot kapatma işlemini başlatır"""
         try:
             # İşlem zaten başladı mı kontrol et
             if self._shutdown_event.is_set() or not self.is_running:
-                logger.debug("Kapatma işlemi zaten başlatılmış, atlanıyor")
+                logger.debug("Kapatma işlemi zaten başlatılmış")
                 return
                     
-            # İşaret olayını ayarla - tüm görevlerin duracağını işaretler  
             self._shutdown_event.set()
-            
-            # Durum değişkenini güncelle
             self.is_running = False
             
-            print(f"\n{Fore.YELLOW}⚠️ Bot kapatma işlemi başlatıldı, tüm görevler sonlanıyor...{Style.RESET_ALL}")
+            print(f"\n{Fore.YELLOW}⚠️ Bot kapatma işlemi başlatıldı{Style.RESET_ALL}")
             
-            # Zamanlayıcı ile acil kapatma - 10 saniye sonra zorla kapatma
-            import threading
-            shutdown_timeout = 10  # 10 saniye
-            emergency_timer = threading.Timer(shutdown_timeout, self._emergency_shutdown)
-            emergency_timer.daemon = True  # Daemon thread
+            # Acil kapatma zamanlayıcısı
+            emergency_timer = threading.Timer(self.shutdown_timeout, self._emergency_shutdown)
+            emergency_timer.daemon = True
             emergency_timer.start()
-            logger.debug(f"Acil kapatma zamanlayıcısı başlatıldı: {shutdown_timeout} saniye")
             
-            # Ana thread'den çağrıldığında asyncio ile işlemleri programla
+            # Ana thread kontrolü
             if threading.current_thread() is threading.main_thread():
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    # Event loop çalışıyorsa, task olarak ekle
                     asyncio.create_task(self._safe_shutdown())
                 else:
-                    # Event loop çalışmıyorsa, yeni bir loop başlat
                     asyncio.run(self._safe_shutdown())
                         
         except Exception as e:
             logger.error(f"Kapatma işlemi başlatma hatası: {str(e)}")
-            # Acil durumda zorla kapat
             self._emergency_shutdown()
 
     async def _safe_shutdown(self):
-        """Tüm görevleri güvenli bir şekilde kapatır"""
+        """
+        Bot'u güvenli şekilde kapatmak için tüm bağlantıları ve veritabanlarını kapatır.
+        """
+        logger.info("Güvenli kapatma işlemi başlatıldı")
+        
+        # Aktif görevleri iptal et
         try:
-            logger.info("Güvenli kapatma işlemi başlatıldı")
-            
-            # İlk olarak aktif görevleri iptal et
+            logger.info("Aktif görevler iptal ediliyor...")
+            # Görevleri iptal etme kodu...
+        except Exception as e:
+            logger.error(f"Görev iptal hatası: {e}")
+        
+        # Bağlantıyı kapat
+        try:
+            logger.info("Telethon bağlantısı kapatılıyor...")
+            if self.client and hasattr(self.client, 'is_connected'):
+                if await self.client.is_connected():
+                    await self.client.disconnect()
+            logger.info("Telethon bağlantısı kapatıldı")
+        except Exception as e:
+            logger.error(f"Bağlantı kapatma hatası: {e}")
+        
+        # Veritabanını kapat
+        if self.db:
+            try:
+                self.db.close()
+            except Exception as e:
+                logger.error(f"Veritabanı kapatma hatası: {e}")
+        
+        # Servisleri durdur
+        await self.service_manager.stop_services()
+        
+        # Bot'u durdur
+        self.is_running = False  # Bu satırı ekleyin/düzeltin
+        
+        print("\n✅ Bot güvenli bir şekilde kapatıldı")
+
+    async def _cleanup_on_exit(self):
+        """Çıkış sırasında temizlik işlemleri"""
+        try:
+            logger.info("Kapanış işlemleri başlatılıyor...")
+
+            # Görevleri iptal et
             await self._cancel_active_tasks()
-            
-            # Görevlerin iptalinin tamamlanması için bekle
-            await asyncio.sleep(1)
-            
-            # Telethon client'ını kapat
+
+            # Client'ı kapat
             if self.client and self.client.is_connected():
-                logger.info("Telethon bağlantısı kapatılıyor...")
-                try:
-                    # Timeout ile bağlantıyı kapat
-                    try:
-                        await asyncio.wait_for(
-                            self.client.disconnect(), 
-                            timeout=3.0
-                        )
-                        logger.info("Telethon bağlantısı kapatıldı")
-                    except asyncio.TimeoutError:
-                        logger.warning("Telethon bağlantısı kapatma zaman aşımı")
-                except Exception as e:
-                    logger.error(f"Telethon kapatma hatası: {str(e)}")
-            
+                await self.client.disconnect()
+                logger.info("Telethon bağlantısı kapatıldı")
+
             # İstatistikleri göster
             self._show_final_stats()
-            
-            print(f"\n{Fore.GREEN}✅ Bot güvenli bir şekilde kapatıldı{Style.RESET_ALL}")
-            
-            # Program sonlanmadıysa 2 saniye sonra zorla kapat
-            import threading
-            threading.Timer(2.0, self._emergency_shutdown).start()
-            
-        except Exception as e:
-            logger.error(f"Güvenli kapatma hatası: {str(e)}")
-            self._emergency_shutdown()
-    
-    def _emergency_shutdown(self):
-        """Acil durum kapatma işlevi - son çare olarak kullanılır"""
-        try:
-            logger.critical("ACİL KAPATMA İŞLEMİ BAŞLATILDI!")
-            print(f"\n{Fore.RED}⚠️ ACİL KAPATMA - Program zorla sonlandırılıyor!{Style.RESET_ALL}")
-            
-            # Kapatma bayrağını ayarla
-            self.is_running = False
-            
-            # Tüm thread'lerin durumu
-            active_threads = threading.enumerate()
-            logger.critical(f"Aktif thread sayısı: {len(active_threads)}")
-            
-            # Kritik thread'leri logla
-            for thread in active_threads:
-                try:
-                    if thread.name != "MainThread" and not thread.daemon:
-                        logger.critical(f"Kritik aktif thread: {thread.name}, daemon: {thread.daemon}")
-                except:
-                    pass
-            
-            # Çıkış öncesi son temizlik
-            try:
-                # Telethon referansını temizle
-                if hasattr(self, 'client') and self.client:
-                    self.client = None
-                    
-                # Veritabanı bağlantısını kapat
-                if hasattr(self, 'db') and self.db:
-                    try:
-                        self.db.close_connection()
-                    except:
-                        pass
-                        
-                # Son çıkış log mesajını yazdır
-                sys.stdout.flush()
-                
-            except:
-                pass
-                
-            # Sistemden çık - OS level (garantili çalışır)
-            print(f"{Fore.RED}Program zorla sonlandırılıyor!{Style.RESET_ALL}")
-            os._exit(1)  # Bu komut her durumda çalışır ve programı ANINDA sonlandırır
-            
-        except Exception as e:
-            print(f"ACİL KAPATMA HATASI: {str(e)}")
-            os._exit(1)  # Yine de çık
-    
-    # Duraklatma yönetimi güçlendirildi
-    def toggle_pause(self):
-        """Botu duraklat/devam ettir - güçlendirilmiş versiyon"""
-        self.is_paused = not self.is_paused
-        
-        if self.is_paused:
-            self._pause_event.set()
-            status = "duraklatıldı ⏸️"
-            print(f"\n{Fore.YELLOW}⏸️ Bot {status} - Tüm görevler duruluyor...{Style.RESET_ALL}")
-        else:
-            self._pause_event.clear()
-            status = "devam ediyor ▶️"
-            print(f"\n{Fore.GREEN}▶️ Bot {status} - Görevler devam ediyor...{Style.RESET_ALL}")
-            
-        logger.info(f"Bot {status}")
-    
-    # Duraklatma durumu kontrolü için yardımcı fonksiyon
-    async def check_paused(self):
-        """Bot duraklatıldıysa, duraklatma sona erene kadar bekle"""
-        if self.is_paused:
-            print(f"{Fore.YELLOW}⏸️ Görev duraklatıldı, devam etmesi için bekliyor...{Style.RESET_ALL}")
-            await self._pause_event.wait()
-            print(f"{Fore.GREEN}▶️ Görev devam ediyor...{Style.RESET_ALL}")
 
-    # Görevleri iptal etme işlevi güçlendirildi
+        except Exception as e:
+            logger.error(f"Kapanış hatası: {str(e)}", exc_info=True)
+        finally:
+            self.is_running = False
+            logger.info("Bot kapatıldı.")
+
     async def _cancel_active_tasks(self):
-        """Aktif görevleri iptal et - güçlendirilmiş versiyon"""
+        """Aktif görevleri iptal et"""
         try:
             logger.info("Aktif görevler iptal ediliyor...")
             cancelled_count = 0
@@ -736,80 +419,548 @@ class TelegramBot:
                 logger.info(f"{cancelled_count} görev iptal edildi, yanıt vermesi bekleniyor...")
                 await asyncio.sleep(2)
                 
-                # Hala sonlanmamış görevleri zorla iptal et
+                # Hala sonlanmamış görevleri kontrol et
                 pending_tasks = [t for t in self.active_tasks if not t.done() and not t.cancelled()]
                 if pending_tasks:
-                    logger.warning(f"{len(pending_tasks)} görev hala yanıt vermiyor, zorla iptal ediliyor...")
-                    for task in pending_tasks:
-                        # Tekrar iptal et ve bekleme
-                        task.cancel()
-                        
+                    logger.warning(f"{len(pending_tasks)} görev hala yanıt vermiyor")
                     # Son kez bekle
                     await asyncio.sleep(1)
             else:
                 logger.info("İptal edilecek aktif görev bulunamadı")
                 
-            # İptal edilemeyen görevler için son durum
-            stuck_tasks = [t for t in self.active_tasks if not t.done() and not t.cancelled()]
-            if stuck_tasks:
-                logger.error(f"{len(stuck_tasks)} görev kilitlendi ve iptal edilemedi!")
-                if self._force_shutdown_flag:
-                    logger.critical("Zorla kapatma bayrağı ayarlandı, program sonlandırılacak!")
-                    print(f"\n{Fore.RED}⚠️ ZORLA KAPATMA - Program sonlandırılıyor!{Style.RESET_ALL}")
-                    # 1 saniyelik bir gecikme ile sistemden çık
-                    threading.Timer(1, lambda: os._exit(1)).start()
-            
         except Exception as e:
             logger.error(f"Görev iptal hatası: {str(e)}", exc_info=True)
-            
+
+    # Yardımcı metotlar
+    def toggle_pause(self):
+        """Botu duraklat/devam ettir"""
+        self.is_paused = not self.is_paused
+        
+        if self.is_paused:
+            self._pause_event.set()
+            status = "duraklatıldı ⏸️"
+            print(f"\n{Fore.YELLOW}⏸️ Bot {status}{Style.RESET_ALL}")
+        else:
+            self._pause_event.clear()
+            status = "devam ediyor ▶️" 
+            print(f"\n{Fore.GREEN}▶️ Bot {status}{Style.RESET_ALL}")
+        
+        logger.info(f"Bot {status}")
+        
+    async def check_paused(self):
+        """Duraklama durumunu kontrol eder"""
+        if self.is_paused:
+            logger.debug("Bot duraklatıldı, bekleniyor...")
+            await asyncio.sleep(5)
+            return True
+        return False
+        
     def show_status(self):
-        """Bot durumunu gösterir"""
-        status = "Çalışıyor ▶️" if not self.is_paused else "Duraklatıldı ⏸️"
+        """Bot durumunu ve istatistikleri gösterir"""
+        if not self.is_running:
+            print(f"{Fore.RED}Bot çalışmıyor!{Style.RESET_ALL}")
+            return
+            
+        # Çalışma süresi hesapla
+        uptime = datetime.now() - self.start_time if self.start_time else timedelta(0)
+        hours, remainder = divmod(uptime.total_seconds(), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        uptime_str = f"{int(hours)}s {int(minutes)}dk {int(seconds)}sn"
         
-        print(f"\n{Fore.CYAN}=== BOT DURUM BİLGİSİ ==={Style.RESET_ALL}")
-        print(f"{Fore.GREEN}▶ Durum:{Style.RESET_ALL} {status}")
-        print(f"{Fore.GREEN}▶ Telefon:{Style.RESET_ALL} {self.phone}")
+        # Grup sayıları
+        total_groups = len(self.processed_groups)
+        error_groups = len(self.error_groups)
+        active_groups = total_groups - error_groups
         
-        if self.start_time:
-            uptime = datetime.now() - self.start_time
-            hours, remainder = divmod(uptime.total_seconds(), 3600)
-            minutes, seconds = divmod(remainder, 60)
-            uptime_str = f"{int(hours)}:{int(minutes):02}:{int(seconds):02}"
-            print(f"{Fore.GREEN}▶ Çalışma Süresi:{Style.RESET_ALL} {uptime_str}")
+        # Aktivite bilgisi
+        activity_count = len(self.displayed_users)
+        invited_count = len(self.responded_users)
         
-        print(f"{Fore.GREEN}▶ Gönderilen Mesaj:{Style.RESET_ALL} {self.sent_count}")
+        # Tablo verilerini hazırla
+        status_data = [
+            ["Bot Durumu", f"{'Duraklatıldı ⏸️' if self.is_paused else 'Aktif ▶️'}"],
+            ["Çalışma Süresi", uptime_str],
+            ["Toplam Grup", total_groups],
+            ["Aktif Grup", active_groups],
+            ["Hatalı Grup", error_groups],
+            ["Tespit Edilen Kullanıcı", activity_count],
+            ["Davet Gönderilen", invited_count],
+            ["Mesaj Gönderilen", self.sent_count]
+        ]
         
-        # PM ve davet durumu
-        print(f"\n{Fore.CYAN}=== DAVET DURUM BİLGİSİ ==={Style.RESET_ALL}")
-        print(f"{Fore.GREEN}▶ Saatlik Limit:{Style.RESET_ALL} {self.pm_state['hourly_count']}/{self.pm_delays['hourly_limit']}")
-        print(f"{Fore.GREEN}▶ Art Arda Limit:{Style.RESET_ALL} {self.pm_state['burst_count']}/{self.pm_delays['burst_limit']}")
+        # Tabloyu oluştur ve yazdır
+        print("\n" + "=" * 50)
+        print(f"{Fore.CYAN}BOT DURUM RAPORU{Style.RESET_ALL}")
+        print(tabulate(status_data, tablefmt="fancy_grid", colalign=("right", "left")))
+        print("=" * 50)
         
-        # FloodWait durumu
-        if self.flood_wait_active and self.flood_wait_end_time:
+        # Rate limit durumları
+        if self.flood_wait_active:
             remaining = (self.flood_wait_end_time - datetime.now()).total_seconds()
-            if remaining > 0:
-                print(f"{Fore.YELLOW}▶ FloodWait:{Style.RESET_ALL} {int(remaining)} saniye kaldı")
-            else:
-                print(f"{Fore.GREEN}▶ FloodWait:{Style.RESET_ALL} Tamamlandı")
+            print(f"{Fore.YELLOW}⚠️ FloodWait aktif: {int(remaining)} saniye kaldı{Style.RESET_ALL}")
+        
+        # Saatlik limit durumu
+        hourly_remain = self.pm_delays['hourly_limit'] - self.pm_state['hourly_count']
+        print(f"{Fore.CYAN}ℹ️ Bu saatte kalan mesaj limiti: {hourly_remain}{Style.RESET_ALL}")
+        
+        # Servis durumlarını göster
+        service_status = self.service_manager.get_service_status()
+        print(f"\n{Fore.CYAN}=== SERVİS DURUMLARI ==={Style.RESET_ALL}")
+        for name, status in service_status.items():
+            running = status.get("running", False)
+            status_color = Fore.GREEN if running else Fore.RED
+            status_text = "✅ Aktif" if running else "❌ Durduruldu"
+            last_activity = status.get("last_activity", "Bilinmiyor")
+            print(f"{Fore.WHITE}{name:<10}: {status_color}{status_text:<10} {Fore.YELLOW}Son aktivite: {last_activity}")
         
     def clear_console(self):
-        """Konsol ekranını temizler"""
-        import os
-        # İşletim sistemine göre uygun komut
-        if os.name == 'posix':  # Unix/Linux/MacOS
-            os.system('clear')
-        elif os.name == 'nt':  # Windows
-            os.system('cls')
+        """Terminal ekranını temizler"""
+        # Platform bağımsız ekran temizleme
+        os.system('cls' if os.name == 'nt' else 'clear')
+        self._print_help(short=True)
+        print(f"{Fore.GREEN}✅ Konsol temizlendi{Style.RESET_ALL}")
+        
+    def _print_help(self, short=False):
+        """Yardım mesajını yazdırır"""
+        # Başlık
+        print(f"\n{Fore.CYAN}=== TELEGRAM BOT KOMUTLARI ==={Style.RESET_ALL}")
+        
+        # Komut tablosu
+        commands = [
+            ["q", "Çıkış", "Botu kapatır"],
+            ["p", "Duraklat/Devam", "Bot işlemlerini duraklatır veya devam ettirir"],
+            ["s", "Durum", "Bot durumunu ve istatistikleri gösterir"],
+            ["c", "Temizle", "Konsol ekranını temizler"],
+            ["h", "Yardım", "Bu yardım mesajını gösterir"]
+        ]
+        
+        if not short:
+            print(tabulate(commands, headers=["Komut", "İşlev", "Açıklama"], tablefmt="simple"))
+            print(f"\n{Fore.YELLOW}Bot komut satırı aktif, komut girişi için >>> işaretinden sonra yazın{Style.RESET_ALL}")
+        else:
+            # Kısa komut listesi
+            cmd_list = [f"{cmd} ({desc})" for cmd, desc, _ in commands]
+            print(f"Komutlar: {' | '.join(cmd_list)}")
+    
+    def _show_explanations(self):
+        """Terminal çıktı açıklamalarını gösterir"""
+        print(f"\n{Fore.CYAN}=== TERMİNAL MESAJ AÇIKLAMALARI ==={Style.RESET_ALL}")
+        
+        explanations = [
+            ["👁️", "Yeni kullanıcı aktivitesi", "Gruplarda ilk kez tespit edilen kullanıcı"],
+            ["🔄", "Tekrar aktivite", "Son 24 saat içinde tekrar görülen kullanıcı"],
+            ["🔙", "Uzun süre sonra görüldü", "Uzun süre sonra tekrar aktif olan kullanıcı"],
+            ["✅", "Davet başarılı", "Kullanıcıya başarıyla davet gönderildi"],
+            ["❌", "Davet başarısız", "Kullanıcıya davet gönderimi başarısız oldu"],
+            ["⚠️", "Zaten davet edildi", "Kullanıcı zaten davet edilmiş"],
+            ["📡", "Telethon güncelleme", "Telegram API güncellemesi"],
+            ["⌛", "FloodWait", "Telegram API rate limit uyarısı"]
+        ]
+        
+        print(tabulate(explanations, headers=["İkon", "Mesaj Tipi", "Açıklama"], tablefmt="simple"))
+        print("-" * 50)
+    
+    def _show_final_stats(self):
+        """Kapanış istatistiklerini gösterir"""
+        if not self.start_time:
+            return
             
-    def _print_help(self):
-        """Komutlarla ilgili yardım mesajını gösterir"""
-        help_text = f"""
-{Fore.CYAN}=== BOT KOMUTLARI ==={Style.RESET_ALL}
-{Fore.GREEN}p{Style.RESET_ALL} - Botu duraklat/devam ettir
-{Fore.GREEN}s{Style.RESET_ALL} - Bot durumunu göster
-{Fore.GREEN}c{Style.RESET_ALL} - Konsolu temizle
-{Fore.GREEN}h{Style.RESET_ALL} - Bu yardım mesajını göster
-{Fore.GREEN}q{Style.RESET_ALL} - Botu durdur ve çık
-{Fore.GREEN}Ctrl+C{Style.RESET_ALL} - Botu durdur ve çık
+        # Çalışma süresi
+        end_time = datetime.now()
+        total_time = end_time - self.start_time
+        hours, remainder = divmod(total_time.total_seconds(), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        # İstatistikler
+        stats = [
+            ["Çalışma Süresi", f"{int(hours)}s {int(minutes)}dk {int(seconds)}sn"],
+            ["İşlenen Grup Sayısı", len(self.processed_groups)],
+            ["Tespit Edilen Kullanıcı", len(self.displayed_users)],
+            ["Gönderilen Mesaj", self.sent_count]
+        ]
+        
+        print("\n" + "=" * 50)
+        print(f"{Fore.CYAN}BOT KAPANIŞ İSTATİSTİKLERİ{Style.RESET_ALL}")
+        print(tabulate(stats, tablefmt="fancy_grid", colalign=("right", "left")))
+        print("=" * 50)
+    
+    def _load_message_templates(self):
+        """Mesaj şablonlarını yükler"""
+        try:
+            logger.info("Mesaj şablonları yükleniyor...")
+            
+            # JSON dosyalarından şablonları yükle
+            self.messages = self.config.load_message_templates()
+            self.invite_templates = self.config.load_invite_templates()
+            self.response_templates = self.config.load_response_templates()
+
+            # Şablonları ilgili listelere aktar
+            self.invite_messages = self.invite_templates.get('invites', [])
+            self.invite_outros = self.invite_templates.get('invites_outro', [])
+            self.redirect_messages = self.invite_templates.get('redirect_messages', [])
+            self.flirty_responses = self.response_templates.get('flirty', [])
+
+            logger.info("Mesaj şablonları başarıyla yüklendi")
+            
+        except Exception as e:
+            logger.error(f"Mesaj şablonları yükleme hatası: {str(e)}")
+            # Varsayılan bir şablon ayarla
+            self.invite_templates = {'default': "Merhaba, grubumuz: {link}"}
+    
+    def _load_error_groups(self):
+        """Veritabanından hata veren grupları yükler"""
+        try:
+            # Hata veren grupları veritabanından al
+            error_groups = self.db.get_error_groups()
+            
+            # Set'i temizle ve yeni değerleri ekle
+            self.error_groups.clear()
+            self.error_reasons.clear()
+            
+            for group_id, group_title, error_reason, error_time, retry_after in error_groups:
+                self.error_groups.add(int(group_id))
+                self.error_reasons[int(group_id)] = error_reason
+            
+            logger.info(f"{len(self.error_groups)} hatalı grup yüklendi")
+            
+        except Exception as e:
+            logger.error(f"Hata veren grupları yükleme hatası: {str(e)}")
+    
+    def _setup_signal_handlers(self):
+        """Sinyal işleyicilerini ayarlar"""
+        try:
+            # UNIX sinyalleri
+            if hasattr(signal, 'SIGINT'):
+                signal.signal(signal.SIGINT, self._handle_shutdown_signal)
+            if hasattr(signal, 'SIGTERM'):
+                signal.signal(signal.SIGTERM, self._handle_shutdown_signal)
+            
+            # Windows için (sadece SIGINT ve SIGBREAK mevcut)
+            if hasattr(signal, 'SIGBREAK'):
+                signal.signal(signal.SIGBREAK, self._handle_shutdown_signal)
+                
+            logger.debug("Sinyal işleyicileri ayarlandı")
+            
+        except Exception as e:
+            logger.error(f"Sinyal işleyici ayarlama hatası: {str(e)}")
+    
+    def _handle_shutdown_signal(self, signum, frame):
+        """Kapatma sinyallerini işler"""
+        signal_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else f"Signal {signum}"
+        print(f"\n{Fore.YELLOW}⚠️ {signal_name} sinyali alındı, bot kapatılıyor...{Style.RESET_ALL}")
+        logger.info(f"{signal_name} sinyali alındı, kapanış başlatılıyor")
+        
+        if self.is_running and not self._shutdown_event.is_set():
+            self.shutdown()
+    
+    def _format_uptime(self):
         """
-        print(help_text)
+        Bot'un çalışma süresini insan tarafından okunabilir formata dönüştürür.
+        
+        Returns:
+            str: "Xg Ys Zd Ws" formatında çalışma süresi (gün, saat, dakika, saniye)
+        """
+        uptime_seconds = self._calculate_uptime()
+        days, remainder = divmod(uptime_seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        return f"{int(days)}g {int(hours)}s {int(minutes)}d {int(seconds)}sn"
+
+    def _calculate_uptime(self):
+        """
+        Bot'un çalışma süresini saniye cinsinden hesaplar.
+        
+        Returns:
+            float: Çalışma süresi (saniye)
+        """
+        if self._start_time <= 0:
+            return 0
+            
+        return datetime.now().timestamp() - self._start_time
+
+    def _register_event_handlers(self):
+        """
+        Telegram istemcisine olay işleyicilerini kaydeder.
+        """
+        from telethon import events
+        
+        # Temel komutlar için pattern'lar - bu desenlerin doğru ayarlandığından emin olun
+        # Eğer RegExp kullanıyorsa şunu deneyin: r'(?i)\/start'
+        start_pattern = r'(?i)/start'
+        help_pattern = r'(?i)/help'
+        status_pattern = r'(?i)/status'
+        
+        # Temel komut işleyicileri
+        if hasattr(self, 'start_command'):
+            self.client.add_event_handler(
+                self.start_command, 
+                events.NewMessage(pattern=start_pattern)  # pattern=... şeklinde belirtin
+            )
+        
+        if hasattr(self, 'help_command'):
+            self.client.add_event_handler(
+                self.help_command,
+                events.NewMessage(pattern=help_pattern)
+            )
+        
+        if hasattr(self, 'status_command'):
+            self.client.add_event_handler(
+                self.status_command,
+                events.NewMessage(pattern=status_pattern)
+            )
+        
+        # Özel mesaj ve grup mesaj işleyicileri...
+        # (diğer işleyiciler aynı kalabilir)
+
+    async def help_command(self, event):
+        """
+        /help komutuna yanıt olarak bot komutları hakkında bilgi verir.
+        
+        Args:
+            event: Telegram mesaj olayı
+        """
+        help_text = (
+            "📱 **Telegram Bot Komutları:**\n\n"
+            "/start - Bot'u başlat\n"
+            "/help - Bu yardım mesajını görüntüle\n"
+            "/status - Bot durumunu görüntüle\n"
+        )
+        
+        await event.respond(help_text)
+        
+    async def status_command(self, event):
+        """
+        /status komutuna yanıt olarak bot durumunu görüntüler.
+        
+        Args:
+            event: Telegram mesaj olayı
+        """
+        uptime = self._format_uptime()
+        status_text = (
+            "🤖 **Bot Durum Raporu:**\n\n"
+            f"Çalışma Süresi: {uptime}\n"
+            f"Aktif: {'✅ Evet' if self.is_running else '❌ Hayır'}\n"
+            f"İşlenen Gruplar: {len(self.target_groups)}\n"
+        )
+        
+        await event.respond(status_text)
+
+    async def start_command(self, event):
+        """
+        /start komutuna yanıt verir.
+        """
+        welcome_text = (
+            "👋 **Hoş Geldiniz!**\n\n"
+            "Bot aktif ve çalışıyor. Komutlar için /help yazabilirsiniz.\n"
+        )
+        await event.respond(welcome_text)
+        
+    async def _emergency_shutdown(self):
+        """
+        Acil durumda bot'un güvenli bir şekilde kapatılmasını sağlar.
+        """
+        try:
+            logger.info("Acil durum kapatma işlemi başlatıldı")
+            
+            # Aktif servisleri durdur
+            self.is_running = False
+            
+            # Tüm işleri iptal et
+            if hasattr(self, '_tasks') and self._tasks:
+                for task in self._tasks:
+                    if not task.done():
+                        task.cancel()
+            
+            # Bağlantıyı kapat
+            if hasattr(self, 'client') and self.client:
+                if await self.client.is_connected():
+                    await self.client.disconnect()
+            
+            # Veritabanını kapat
+            if hasattr(self, 'db') and self.db:
+                self.db.close_connection()
+            
+            logger.info("Acil durum kapatma tamamlandı")
+        except Exception as e:
+            logger.error(f"Acil durum kapatma sırasında hata: {e}")
+
+    async def on_private_message(self, event):
+        """
+        Özel mesajları işleyen metod.
+        
+        Args:
+            event: Telegram mesaj olayı
+        """
+        if hasattr(self, 'dm_service'):
+            await self.dm_service.process_message(event)
+        else:
+            logger.warning("dm_service bulunamadı, özel mesaj işlenemiyor")
+
+    def _is_private_chat(self, event):
+        """
+        Etkinliğin özel mesajlaşma olup olmadığını kontrol eder.
+        
+        Args:
+            event: Telegram etkinlik nesnesi
+        
+        Returns:
+            bool: Özel mesajlaşma ise True
+        """
+        return event.is_private
+
+    def _is_group_chat(self, event):
+        """
+        Etkinliğin grup mesajlaşması olup olmadığını kontrol eder.
+        
+        Args:
+            event: Telegram etkinlik nesnesi
+        
+        Returns:
+            bool: Grup mesajlaşması ise True
+        """
+        return not event.is_private
+
+    async def on_group_message(self, event):
+        """
+        Grup mesajlarını işleyen metod.
+        
+        Args:
+            event: Telegram mesaj olayı
+        """
+        if hasattr(self, 'reply_service'):
+            await self.reply_service.process_message(event)
+        else:
+            logger.debug("reply_service bulunamadı, grup mesajı işlenemiyor")
+
+    async def init_services(self):
+        """Tüm servisleri başlatır"""
+        try:
+            # Grup keşfi yap
+            await self.discover_groups()
+
+            # GROUP SERVICE
+            from bot.services.group_service import GroupService
+            self.group_service = GroupService(self.client, self.config, self.db, self._shutdown_event)
+            # Hedef grupları geçir
+            self.group_service.set_target_groups(self.target_groups)
+            self.services["group"] = self.group_service
+            
+            # DM SERVICE
+            from bot.services.dm_service import DirectMessageService
+            self.dm_service = DirectMessageService(self.client, self.config, self.db, self._shutdown_event)
+            self.services["dm"] = self.dm_service
+            
+            # REPLY SERVICE
+            from bot.services.reply_service import ReplyService
+            self.reply_service = ReplyService(self.client, self.config, self.db, self._shutdown_event)
+            self.services["reply"] = self.reply_service
+            
+            # UserService oluşturma kısmını düzelt
+            try:
+                from bot.services.user_service import UserService
+                # !! DÜZELTME: self.db ve self.config parametrelerinin sırası ve client eklenmesi
+                self.user_service = UserService(self.client, self.config, self.db, self._shutdown_event)
+                self.services["user"] = self.user_service
+            except (ImportError, AttributeError) as e:
+                logger.error(f"UserService yüklenemedi: {e}")
+            
+            # Servisleri başlat
+            await self._start_all_services()
+            
+            logger.info("✅ Tüm servisler başarıyla başlatıldı")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Servis başlatma hatası: {str(e)}", exc_info=True)
+            return False
+
+    async def _start_all_services(self):
+        """Tüm servisleri başlatır"""
+        for name, service in self.services.items():
+            try:
+                if hasattr(service, 'start'):
+                    await service.start()
+                    logger.info(f"✅ {name} servisi başlatıldı")
+                elif hasattr(service, 'run'):
+                    # Run metodu varsa task olarak başlat
+                    asyncio.create_task(service.run())
+                    logger.info(f"✅ {name} servisi (run metodu) başlatıldı")
+            except Exception as e:
+                logger.error(f"❌ {name} servisi başlatılamadı: {str(e)}")
+
+    async def discover_groups(self):
+        """Kullanıcının üye olduğu tüm grupları tespit eder"""
+        logger.info("Grup keşfi başlatılıyor...")
+        
+        try:
+            dialogs = await self.client.get_dialogs()
+            discovered = []
+            
+            for dialog in dialogs:
+                if dialog.is_group or dialog.is_channel:
+                    group_id = dialog.id
+                    group_name = dialog.title
+                    
+                    # Gruba ekle ve veritabanına kaydet
+                    if group_id not in self.target_groups and group_id not in self.admin_groups:
+                        self.target_groups.append(group_id)
+                        discovered.append(f"{group_name} ({group_id})")
+                        
+                        # Veritabanına kaydet (eğer db şeması destekliyorsa)
+                        if hasattr(self.db, 'add_group'):
+                            self.db.add_group(group_id, group_name)
+            
+            # Servislere bildirme
+            if self.group_service:
+                self.group_service.target_groups = self.target_groups
+                
+            logger.info(f"{len(discovered)} yeni grup keşfedildi: {', '.join(discovered)}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Grup keşif hatası: {e}")
+            return False
+
+    def enable_debug_mode(self):
+        """Debug modunu etkinleştir."""
+        import logging
+        import sys
+        from colorama import init, Fore, Back, Style
+        
+        # Colorama başlat
+        init(autoreset=True)
+        
+        # Log seviyesini DEBUG'a ayarla
+        for logger_name in ('bot', 'telethon', 'database'):
+            logger = logging.getLogger(logger_name)
+            logger.setLevel(logging.DEBUG)
+        
+        # Debug ekranı göster
+        print(f"{Fore.YELLOW}{Style.BRIGHT}🐞 DEBUG MODU ETKİN 🐞")
+        print(f"{Fore.YELLOW}════════════════════════════════")
+        print(f"{Fore.GREEN}• API ID: {self.api_id}")
+        print(f"{Fore.GREEN}• Telefon: {self.phone[:6]}******")
+        print(f"{Fore.GREEN}• Admin grupları: {self.admin_groups}")
+        print(f"{Fore.GREEN}• Hedef grupları: {self.target_groups}")
+        print(f"{Fore.YELLOW}════════════════════════════════")
+        
+        # Her mesaj gönderme denemesini console'da göster
+        def debug_send_message_wrapper(original_func):
+            async def wrapper(entity, message, *args, **kwargs):
+                print(f"{Fore.CYAN}📤 MESAJ GÖNDERME DENEME: {entity}")
+                print(f"{Fore.WHITE}Mesaj: {message[:30]}...")
+                try:
+                    result = await original_func(entity, message, *args, **kwargs)
+                    print(f"{Fore.GREEN}✅ Başarılı!")
+                    return result
+                except Exception as e:
+                    print(f"{Fore.RED}❌ Hata: {str(e)}")
+                    raise
+                    
+            return wrapper
+        
+        # Client'ın send_message metodunu wrap et
+        self.client.send_message = debug_send_message_wrapper(self.client.send_message)
+        
+        return True
