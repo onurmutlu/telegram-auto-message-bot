@@ -1,5 +1,23 @@
 """
-Telegram botu için hata yönetimi
+# ============================================================================ #
+# Dosya: error_handler.py
+# Yol: /Users/siyahkare/code/telegram-bot/bot/utils/error_handler.py
+# Açıklama: Telegram botu için hata yakalama, işleme ve yönetimi.
+#
+# Bu modül, Telegram botunun karşılaştığı hataları yakalar, işler ve yönetir.
+# Temel Özellikler:
+# - Hata istatistiklerini tutma ve raporlama.
+# - Tekrarlanan hataları filtreleme.
+# - FloodWait hatalarını akıllıca yönetme.
+# - Hata mesajlarını açıklama ve çözüm önerileri sunma.
+# - Özel log işleyicileri ile Telethon loglarını özelleştirme.
+#
+# Geliştirme: 2025-04-01
+# Versiyon: v3.4.0
+# Lisans: MIT
+#
+# Telif Hakkı (c) 2025 SiyahKare Yazılım - Tüm Hakları Saklıdır.
+# ============================================================================ #
 """
 import logging
 import asyncio
@@ -11,19 +29,40 @@ from tabulate import tabulate
 logger = logging.getLogger(__name__)
 
 class ErrorHandler:
-    """Hata ve log yöneticisi"""
+    """
+    Hata ve log yönetimi sınıfı.
+
+    Bu sınıf, Telegram botunda meydana gelen hataları yakalar, işler, istatistiklerini tutar ve yönetir.
+    Ayrıca, Telethon kütüphanesinden gelen logları özelleştirerek daha anlamlı hale getirir.
+    """
     
     def __init__(self, bot):
+        """
+        ErrorHandler sınıfının yapılandırıcısı.
+
+        Args:
+            bot: Bot nesnesi.
+        """
         self.bot = bot
         self.error_stats = {}
         self.telethon_log_cache = {}  # Telethon logları için önbellek
         self.last_log_time = {}  # Son log zamanı
         
+        # Flood wait ve rate limiting için gerekli değişkenler
+        self.flood_wait_times = {}
+        self.rate_limit_cooldowns = {}
+        self.error_counter = {}  # Hata sayacı
+        
         # Orijinal logger'ları koru
         self._setup_custom_loggers()
     
     def _setup_custom_loggers(self):
-        """Özel log işleyicisi ekle"""
+        """
+        Özel log işleyicilerini ayarlar.
+
+        Bu metot, Telethon logger'ına özel bir işleyici ekleyerek log mesajlarını özelleştirir.
+        Tekrarlanan mesajları filtreler ve FloodWait hatalarını yönetir.
+        """
         import logging
         import time
         
@@ -44,8 +83,15 @@ class ErrorHandler:
         telethon_logger.addHandler(custom_handler)
     
     def _custom_emit(self, record):
-        """Özel log emisyonu - tekrarlanan mesajları filtreler"""
-        # Format hatasını önlemek için record'u direkt değerlendir
+        """
+        Özel log emisyonu - tekrarlanan mesajları filtreler.
+
+        Bu metot, log kayıtlarını işler ve tekrarlanan mesajları filtreleyerek konsola yazdırır.
+        FloodWait mesajlarını özel olarak yönetir ve özet mesajlar gösterir.
+
+        Args:
+            record (logging.LogRecord): Log kaydı nesnesi.
+        """
         try:
             import time
             
@@ -96,7 +142,15 @@ class ErrorHandler:
             print(f"LOG HATASI: {e} - Orijinal mesaj: {getattr(record, 'msg', 'bilinmeyen mesaj')}")
 
     def _original_emit(self, record):
-        """Orijinal log emitter - düzeltilmiş versiyon"""
+        """
+        Orijinal log emitter - düzeltilmiş versiyon.
+
+        Bu metot, orijinal log mesajlarını güvenli bir şekilde formatlar ve yazdırır.
+        Hata durumunda, hatayı yakalar ve güvenli bir şekilde loglar.
+
+        Args:
+            record (logging.LogRecord): Log kaydı nesnesi.
+        """
         try:
             # Direkt formatter kullanmak yerine manuel olarak formatla
             # Sorunlu alan: formatter = logging.Formatter('%(asctime)s - %(name)s - %(levellevel)s - %(message)s')
@@ -111,7 +165,12 @@ class ErrorHandler:
             print(f"LOG HATASI: {e} - Orijinal mesaj: {getattr(record, 'msg', 'bilinmeyen mesaj')}")
 
     async def manage_error_groups(self):
-        """Grup hata kayıtlarını yönetir - iyileştirilmiş tablo formatı"""
+        """
+        Grup hata kayıtlarını yönetir - iyileştirilmiş tablo formatı.
+
+        Bu metot, veritabanından hata gruplarını alır ve konsola tablo formatında yazdırır.
+        Kullanıcıya hata kayıtlarını koruma veya temizleme seçeneği sunar.
+        """
         error_groups = self.bot.db.get_error_groups()
         if not error_groups:
             logger.info("Hata veren grup kaydı bulunmadı")
@@ -178,7 +237,20 @@ class ErrorHandler:
             logger.error(f"Hata kayıtları yönetim hatası: {str(e)}")
     
     def log_error(self, error_type: str, error_message: str, context: Dict[str, Any] = None):
-        """Hataları loglar ve tekrarları filtreler"""
+        """
+        Hataları loglar ve tekrarları filtreler.
+
+        Bu metot, hataları loglar, tekrarlarını filtreler ve istatistiklerini tutar.
+        FloodWait hatalarını özel olarak işler.
+
+        Args:
+            error_type (str): Hata türü.
+            error_message (str): Hata mesajı.
+            context (Dict[str, Any], optional): Hata bağlamı. Varsayılan olarak None.
+
+        Returns:
+            bool: Hata loglandıysa True, aksi halde False.
+        """
         # Context yoksa boş dict oluştur
         context = context or {}
         
@@ -223,8 +295,20 @@ class ErrorHandler:
         return False
         
     def handle_flood_wait(self, error_type: str, error_message: str, context: Dict[str, Any]) -> bool:
-        """FloodWait hatalarını akıllıca işler"""
-        # Hata mesajından bekleme süresini çıkart
+        """
+        FloodWait hatalarını akıllıca işler.
+
+        Bu metot, FloodWait hatalarını analiz eder, bekleme süresini çıkartır ve loglar.
+        Ayrıca, rate limit için önerilen bekleme süresini günceller.
+
+        Args:
+            error_type (str): Hata türü.
+            error_message (str): Hata mesajı.
+            context (Dict[str, Any]): Hata bağlamı.
+
+        Returns:
+            bool: Hata loglandıysa True, aksi halde False.
+        """
         import re
         wait_time_match = re.search(r'(\d+) second', error_message)
         wait_time = int(wait_time_match.group(1)) if wait_time_match else 60
@@ -276,7 +360,11 @@ class ErrorHandler:
     
     def should_throttle(self, request_type: str) -> Tuple[bool, int]:
         """
-        Belirli bir istek türü için throttling kararı verir
+        Belirli bir istek türü için throttling kararı verir.
+
+        Args:
+            request_type (str): İstek türü.
+
         Returns:
             Tuple[bool, int]: (Beklemeli mi?, Ne kadar beklemeli?)
         """
@@ -318,7 +406,12 @@ class ErrorHandler:
             return 100
             
     def get_stats(self):
-        """Hata istatistiklerini rapor olarak döndürür"""
+        """
+        Hata istatistiklerini rapor olarak döndürür.
+
+        Returns:
+            str: Hata istatistikleri tablosu.
+        """
         if not self.error_stats:
             return "Henüz kaydedilmiş hata yok"
             
@@ -337,7 +430,15 @@ class ErrorHandler:
         return tabulate(stats_table, headers=["Hata Tipi", "Sayı", "Örnekler"], tablefmt="grid")
         
     def explain_error(self, error_message: str) -> str:
-        """Yaygın hataları açıklar ve çözüm önerileri sunar"""
+        """
+        Yaygın hataları açıklar ve çözüm önerileri sunar.
+
+        Args:
+            error_message (str): Hata mesajı.
+
+        Returns:
+            str: Hata açıklaması ve çözüm önerileri.
+        """
         explanations = {
             "FloodWaitError": "Telegram API hız sınırı aşıldı; belirtilen süre kadar beklemeniz gerekiyor.",
             "A wait of": "Telegram API hız sınırı aşıldı; belirtilen süre kadar beklenecek.",

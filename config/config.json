@@ -1,7 +1,0 @@
-{
-    "session_file": "session/telegram_bot",
-    "log_file": "logs/bot.log",
-    "log_level": "INFO",
-    "debug_mode": false,
-    "environment": "production"
-}

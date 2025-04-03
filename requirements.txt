@@ -1,19 +1,50 @@
-telethon>=1.25.4
-python-dotenv>=0.19.2
-colorama>=0.4.4
-tabulate>=0.8.9
+# Temel paketler
+telethon==1.32.1
+python-dotenv==1.0.1
+colorama==0.4.6
+tabulate==0.9.0
 
-# Test paketleri (opsiyonel)
-pytest>=7.0.0
-pytest-asyncio>=0.18.3
-pytest-cov>=3.0.0
+# Telegram API
+python-telegram-bot==20.7
 
-# Loglama için ilave paketler (opsiyonel)
-rich>=10.0.0
+# Asenkron işlemler
+asyncio==3.4.3
+
+# Veritabanı
+SQLAlchemy==2.0.27
+psycopg2-binary==2.9.9
+aiosqlite==0.19.0  # Asenkron SQLite işlemleri için
+
+# Test paketleri
+pytest==8.0.1
+pytest-asyncio==0.23.5
+pytest-cov==4.1.0
+pytest-timeout==2.2.0  # Test timeout yönetimi için
+pytest-mock==3.12.0  # Mocking işlemleri için
+
+# Loglama ve zengin çıktı
+rich==13.7.0
+loguru==0.7.2  # Daha iyi loglama deneyimi için
+
+# Görüntü işleme
+Pillow==10.2.0
+
+# Veri işleme
+pandas==2.2.0  # Veri analizi için (opsiyonel)
+pydantic==2.5.3  # Veri doğrulama için
+
+# Performans ve güvenlik
+ujson==5.9.0  # Hızlı JSON işleme 
+cryptography==42.0.1  # Güvenlik işlemleri için
 
 # NOT: Aşağıdaki modüller Python ile birlikte gelir, ayrıca yüklemeye gerek yoktur
-# - asyncio (standart kütüphane)
 # - typing (standart kütüphane)
 # - pathlib (standart kütüphane, Python 3.4+)
 # - sqlite3 (standart kütüphane)
 # - json (standart kütüphane)
+# - datetime (standart kütüphane)
+# - os (standart kütüphane)
+# - sys (standart kütüphane)colorama
+requests
+colorama
+requests

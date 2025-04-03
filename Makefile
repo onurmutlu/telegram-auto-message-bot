@@ -1,4 +1,4 @@
-.PHONY: test clean lint install
+.PHONY: test clean lint install run run-clean clean-logs clean-cache
 
 # Değişkenler
 PYTHON = python
@@ -10,7 +10,8 @@ all: clean test
 
 # Test çalıştırma
 test:
-    pytest $(TEST_DIR)
+    @echo "🧪 Testler çalıştırılıyor..."
+    python -m pytest
 
 # Verbose test çalıştırma 
 test-v:
@@ -27,6 +28,8 @@ test-fail-fast:
 
 # Temizleme
 clean:
+    @echo "🧹 Temizlik yapılıyor..."
+    python cleanup.py --all
     find . -type d -name "__pycache__" -exec rm -rf {} +
     find . -type f -name "*.pyc" -delete
     find . -type f -name "*.pyo" -delete
@@ -35,6 +38,14 @@ clean:
     find . -type d -name "*.egg-info" -exec rm -rf {} +
     find . -type d -name "*.eggs" -exec rm -rf {} +
     find . -type d -name ".pytest_cache" -exec rm -rf {} +
+
+clean-logs:
+    @echo "📝 Loglar temizleniyor..."
+    python cleanup.py --logs
+
+clean-cache:
+    @echo "📁 Cache dosyaları temizleniyor..."
+    python cleanup.py --cache
 
 # Linting
 lint:
@@ -47,3 +58,11 @@ install:
 # Testler için gerekli bağımlılıkları yükleme
 install-test:
     pip install pytest pytest-asyncio colorama tabulate python-dotenv
+
+run:
+    @echo "🤖 Bot başlatılıyor..."
+    python main.py
+
+run-clean: clean
+    @echo "🤖 Temizlik sonrası bot başlatılıyor..."
+    python main.py

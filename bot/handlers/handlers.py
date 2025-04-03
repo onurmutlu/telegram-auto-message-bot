@@ -1,23 +1,68 @@
 """
-Telegram mesaj işleyicileri
+# ============================================================================ #
+# Dosya: handlers.py
+# Yol: /Users/siyahkare/code/telegram-bot/bot/handlers/handlers.py
+# İşlev: Telegram bot için işleyici (handler) yönetimi ve olay yönlendirme.
+#
+# Build: 2025-04-01-00:36:09
+# Versiyon: v3.4.0
+# ============================================================================ #
+#
+# Bu modül, Telegram botunun olaylarını (mesajlar, komutlar vb.) yönetir ve
+# ilgili işleyicilere (handler) yönlendirir. Temel özellikleri:
+# - Gelen mesajları türüne göre farklı işleyicilere yönlendirme
+# - Özel mesajları işleme
+# - Grup mesajlarını işleme
+# - Kullanıcı komutlarını işleme
+# - Aktif kullanıcıları takip etme
+# - Hata yönetimi ve loglama
+#
+# ============================================================================ #
 """
+
 import logging
 import asyncio
 import random
 from telethon import events, errors
 from colorama import Fore, Style
+from bot.handlers.group_handler import GroupHandler
+from bot.handlers.message_handler import MessageHandler
+from bot.handlers.user_handler import UserHandler
 
 logger = logging.getLogger(__name__)
 
 class MessageHandlers:
-    """Telegram mesaj işleyicileri"""
+    """
+    Telegram mesaj işleyicileri ve yönlendirme merkezi
+    
+    Bu sınıf, Telegram'dan gelen tüm olayları dinler ve
+    ilgili handler sınıflarına/metotlara yönlendirir.
+    """
     
     def __init__(self, bot):
         """Bot nesnesine referans"""
         self.bot = bot
-        # Kullanıcı aktivite izleme için
+        self.group_handler = GroupHandler(bot)
+        self.message_handler = MessageHandler(bot)
+        self.user_handler = UserHandler(bot)
+        # Diğer handler'lar...
+        
+        # Kullanıcı aktivite kayıtları
         self.displayed_users = set()
         self.last_user_logs = {}
+
+    def handle_message(self, message):
+        """Gelen mesajları ilgili handler'a yönlendirir."""
+        # Mesaj türüne göre ilgili handler'a yönlendirme yap
+        self.message_handler.process_message(message)
+
+    def handle_group_message(self, message):
+        """Grup mesajlarını ilgili handler'a yönlendirir."""
+        self.group_handler.process_group_message(message)
+
+    def handle_user_command(self, message):
+        """Kullanıcı komutlarını ilgili handler'a yönlendirir."""
+        self.user_handler.process_user_command(message)
         
     def setup_handlers(self):
         """Telethon mesaj işleyicilerini ayarlar"""

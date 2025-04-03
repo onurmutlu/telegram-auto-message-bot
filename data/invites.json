@@ -1,4 +1,8 @@
 {
+  "first_invite": [
+    "Merhaba, aramıza katıl!",
+    "Sizi grubumuza davet ediyoruz!"
+  ],
   "invites": [
     "Bizim gruba da beklerim: t.me/{} 🌟",
     "Sohbet etmek istersen grubumuza gel: t.me/{} ✨",
@@ -22,13 +26,10 @@
     "En güzel muhabbetler için: t.me/{} 🎭"
   ],
   "invites_outro": [
-    "\n\nDiğer gruplarımız da burada 👇\n",
-    "\n\nTüm gruplarımız aşağıda 👇\n",
     "\n\nDiğer gruplarımıza da bekleriz 👇\n"
   ],
   "redirect_messages": [
-    "Gruplarda konuşalım, özelden konuşmayalım. 🙂",
-    "Özelden konuşmuyorum, gruplarımıza bekliyorum! 🌟",
-    "Sohbeti gruplarımızda sürdürelim. 👇"
+    "Bu gruba mesaj atabilirsin: t.me/{}",
+    "Şu grup da ilgini çekebilir: t.me/{}"
   ]
 }

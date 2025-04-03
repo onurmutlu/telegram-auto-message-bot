@@ -1,6 +1,23 @@
 """
-Kullanıcı işlemlerini yöneten sınıf
+# ============================================================================ #
+# Dosya: user_handler.py
+# Yol: /Users/siyahkare/code/telegram-bot/bot/handlers/user_handler.py
+# İşlev: Telegram bot için kullanıcı etkileşim yönetimi.
+#
+# Build: 2025-04-01-00:36:09
+# Versiyon: v3.4.0
+# ============================================================================ #
+#
+# Bu modül, Telegram botunun kullanıcılarla olan etkileşimlerini yönetir.
+# Temel özellikleri:
+# - Kullanıcı komutlarını işleme
+# - Özel davet mesajları gönderme
+# - Rate limiting (hız sınırlama) uygulama
+# - Hata yönetimi ve loglama
+#
+# ============================================================================ #
 """
+
 import asyncio
 import random
 import logging
@@ -13,10 +30,20 @@ from telethon import errors
 logger = logging.getLogger(__name__)
 
 class UserHandler:
-    """Kullanıcı işlemleri yöneticisi"""
+    """
+    Telegram bot için kullanıcı etkileşimlerini yöneten sınıf.
+
+    Bu sınıf, kullanıcılara özel mesajlar gönderme, davetler yönetme ve
+    rate limiting gibi işlemleri gerçekleştirir.
+    """
     
     def __init__(self, bot):
-        """Bot nesnesini alır"""
+        """
+        UserHandler sınıfının başlatıcı metodu.
+
+        Args:
+            bot: Bağlı olduğu bot nesnesi.
+        """
         self.bot = bot
         
         # Rate limiting için parametreler
@@ -36,9 +63,24 @@ class UserHandler:
             'last_pm_time': None,
             'consecutive_errors': 0
         }
+
+    def process_user_command(self, message):
+        """
+        Kullanıcıdan gelen komutları işler.
+
+        Args:
+            message: İşlenecek mesaj nesnesi.
+        """
+        print(f"Kullanıcı komutu alındı: {message.text}")
+        self.bot.send_message(message.chat.id, "Kullanıcı komutu işleniyor...")
     
     async def process_personal_invites(self):
-        """Özel davetleri işler - daha sık çalışacak"""
+        """
+        Sistemdeki kullanıcılara özel davetler gönderir.
+
+        Bu fonksiyon, veritabanından davet edilecek kullanıcıları alır ve
+        onlara özel mesajlar gönderir. Rate limiting ve hata yönetimi içerir.
+        """
         while self.bot.is_running:
             if not self.bot.is_paused:
                 try:
@@ -46,9 +88,9 @@ class UserHandler:
                     if self.bot._shutdown_event.is_set():
                         break
                     
-                    # Her 5 dakikada bir çalış (60 → 5 dakika'ya düşürdük)
+                    # Her 2 dakikada bir çalış (5 → 2 dakika'ya düşürdük)
                     # Küçük adımlarla bekle
-                    for _ in range(30):  # 30 saniye bekle
+                    for _ in range(12):  # 12 saniye bekle
                         if not self.bot.is_running or self.bot._shutdown_event.is_set():
                             break
                         await asyncio.sleep(1)
@@ -58,7 +100,13 @@ class UserHandler:
                         break
                     
                     # Davet edilecek kullanıcıları al
-                    users_to_invite = self.bot.db.get_users_to_invite(limit=5)
+                    try:
+                        users_to_invite = self.bot.db.get_users_to_invite(limit=5)
+                    except Exception as e:
+                        logger.error(f"Kullanıcı listesi alma hatası: {str(e)}")
+                        await self._interruptible_sleep(30)
+                        continue
+                        
                     if not users_to_invite:
                         logger.info("📪 Davet edilecek kullanıcı bulunamadı")
                         continue
@@ -79,8 +127,11 @@ class UserHandler:
                         # Özel mesaj gönder
                         invite_message = self._create_invite_message()
                         if await self._send_personal_message(user_id, invite_message):
-                            self.bot.db.mark_as_invited(user_id)
-                            logger.info(f"✅ Davet gönderildi: {username or user_id}")
+                            try:
+                                self.bot.db.mark_as_invited(user_id)
+                                logger.info(f"✅ Davet gönderildi: {username or user_id}")
+                            except Exception as e:
+                                logger.error(f"Davet kayıt hatası: {str(e)}")
                         
                         # Davetler arasında bekle - bölünmüş bekleme
                         await self._interruptible_sleep(random.randint(30, 60))  # Daha kısa bekleme
@@ -105,20 +156,17 @@ class UserHandler:
             else:
                 await asyncio.sleep(1)
     
-    def _create_invite_message(self):
-        """Davet mesajı oluşturur"""
-        # Rastgele davet mesajı ve outro seç
-        random_invite = random.choice(self.bot.invite_messages)
-        outro = random.choice(self.bot.invite_outros)
-        
-        # Grup bağlantılarını oluştur
-        group_links = "\n".join([f"• t.me/{link}" for link in self.bot.group_links])
-        
-        # Mesajı formatla
-        return f"{random_invite.format(self.bot.group_links[0])}{outro}{group_links}"
-    
     async def _send_personal_message(self, user_id: int, message: str) -> bool:
-        """Kullanıcıya özel mesaj gönderir"""
+        """
+        Belirli bir kullanıcıya özel mesaj gönderir.
+
+        Args:
+            user_id: Mesaj gönderilecek kullanıcının ID'si.
+            message: Gönderilecek mesaj.
+
+        Returns:
+            bool: Mesaj başarıyla gönderildiyse True, aksi halde False.
+        """
         try:
             # Akıllı gecikme uygula
             await self._smart_delay()
@@ -156,7 +204,12 @@ class UserHandler:
         return False
     
     async def _smart_delay(self) -> None:
-        """Gelişmiş akıllı gecikme sistemi"""
+        """
+        Akıllı gecikme mekanizması uygular.
+
+        Bu fonksiyon, rate limiting ve ardışık hataları dikkate alarak
+        mesaj gönderme işlemlerinde gecikme uygular.
+        """
         try:
             current_time = datetime.now()
             
@@ -197,7 +250,16 @@ class UserHandler:
             await asyncio.sleep(60)
     
     async def _invite_user(self, user_id: int, username: Optional[str]) -> bool:
-        """Kullanıcıya özel davet mesajı gönderir"""
+        """
+        Belirli bir kullanıcıya davet mesajı gönderir.
+
+        Args:
+            user_id: Davet edilecek kullanıcının ID'si.
+            username: Kullanıcının kullanıcı adı (isteğe bağlı).
+
+        Returns:
+            bool: Davet başarıyla gönderildiyse True, aksi halde False.
+        """
         try:
             # Kullanıcı bilgisini log
             user_info = f"@{username}" if username else f"ID:{user_id}"
@@ -209,7 +271,7 @@ class UserHandler:
                 return False
             
             # Davet mesajını oluştur ve gönder
-            message = self._create_invite_message()
+            message = self.bot._create_invite_message()
             await self.bot.client.send_message(user_id, message)
             
             # Veritabanını güncelle
@@ -251,11 +313,3 @@ class UserHandler:
             print(self.bot.terminal_format['user_invite_fail'].format(user_info, f"Hata: {e.__class__.__name__}"))
             await asyncio.sleep(30)
             return False
-    
-    async def _interruptible_sleep(self, seconds):
-        """Kesintiye uğrayabilen bekleme"""
-        step = 0.5  # Daha sık kontroller
-        for _ in range(int(seconds / step)):
-            if not self.bot.is_running or self.bot._shutdown_event.is_set():
-                break
-            await asyncio.sleep(step)

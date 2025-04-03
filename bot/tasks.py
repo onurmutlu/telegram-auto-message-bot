@@ -1,5 +1,27 @@
 """
-Bot görevleri için sınıf
+# ============================================================================ #
+# Dosya: tasks.py
+# Yol: /Users/siyahkare/code/telegram-bot/bot/tasks.py
+# İşlev: Telegram Bot Görev Yönetimi
+#
+# Build: 2025-04-01-04:15:00
+# Versiyon: v3.4.0
+# ============================================================================ #
+#
+# Bu modül, Telegram bot uygulamasının görev yönetimini sağlar:
+# - Periyodik görevlerin (temizleme, durum kontrolü) yönetimi
+# - Konsol komutlarını dinleme ve işleme
+# - Grup mesajları gönderme ve kişisel davetler işleme
+# - Hata yönetimi ve loglama
+# - Asenkron işlem desteği
+#
+# Sorumluluklar:
+# - Botun sürekli çalışmasını sağlamak
+# - Belirli aralıklarla yapılması gereken işleri otomatikleştirmek
+# - Kullanıcıdan gelen komutları yorumlamak ve uygulamak
+#
+# © 2025 SiyahKare Yazılım - Tüm Hakları Saklıdır
+# ============================================================================ #
 """
 import asyncio
 import sys
@@ -15,14 +37,51 @@ from telethon import errors
 logger = logging.getLogger(__name__)
 
 class BotTasks:
-    """Bot için periyodik görevler ve komut dinleyici"""
+    """
+    Telegram bot için periyodik görevler ve komut dinleyici.
+    
+    Bu sınıf, botun sürekli çalışmasını ve belirli aralıklarla
+    yapılması gereken işleri yönetir. Ayrıca, konsoldan gelen
+    komutları dinler ve işler.
+    """
     
     def __init__(self, bot):
-        """Bot referansını alarak başlat"""
-        self.bot = bot
+        """
+        BotTasks sınıfını başlatır.
         
+        Args:
+            bot: Ana TelegramBot nesnesi.
+        """
+        self.bot = bot
+        self.active_tasks = []
+        
+    async def start_tasks(self):
+        """
+        Tüm görevleri başlatır.
+        
+        Bu metot, tüm periyodik görevleri ve komut dinleyiciyi başlatır.
+        """
+        tasks = [
+            self.manage_error_groups(),
+            self.periodic_cleanup(),
+            self.command_listener(),
+            self.process_group_messages(),
+            self.process_personal_invites()
+        ]
+        
+        # Görevleri kaydet
+        self.active_tasks = [asyncio.create_task(task) for task in tasks]
+        
+        # Görevleri başlat
+        await asyncio.gather(*self.active_tasks, return_exceptions=True)
+
     async def command_listener(self):
-        """Konsoldan komut dinler"""
+        """
+        Konsoldan komut dinler.
+        
+        Bu metot, konsoldan girilen komutları dinler ve ilgili
+        işlemleri gerçekleştirir.
+        """
         logger.info("Komut dinleyici başlatıldı")
         
         # Bot kullanımı için yardım mesajını göster
@@ -69,198 +128,103 @@ class BotTasks:
         logger.info("Komut dinleyici sonlandı")
     
     async def _async_input(self, prompt):
-        """Asenkron I/O için giriş alma"""
+        """
+        Asenkron I/O için giriş alma.
+        
+        Bu metot, asenkron bir şekilde kullanıcıdan giriş almayı sağlar.
+        
+        Args:
+            prompt: Kullanıcıya gösterilecek mesaj.
+        
+        Returns:
+            Kullanıcının girdiği metin.
+        """
         # Standart input'un asenkron versiyonu
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, lambda: input(prompt))
     
     async def process_group_messages(self):
-        """Gruplara düzenli mesaj gönderir"""
-        logger.info("Grup mesaj gönderme görevi başlatıldı")
+        """
+        Grup mesajlarını işler.
         
-        while self.bot.is_running and not self.bot._shutdown_event.is_set():
-            try:
-                # Duraklatma kontrolü - kritik nokta
-                if self.bot.is_paused:
-                    await self.bot.check_paused()
-                    continue
-                
-                # Her turda önce süresi dolmuş hataları temizle
-                cleared_errors = self.bot.db.clear_expired_error_groups()
-                if cleared_errors > 0:
-                    logger.info(f"{cleared_errors} adet süresi dolmuş hata kaydı temizlendi")
-                    # Hafızadaki hata listesini de güncelle
-                    self.bot._load_error_groups()
-                
-                current_time = datetime.now().strftime("%H:%M:%S")
-                logger.info(f"🔄 Yeni tur başlıyor: {current_time}")
-                
-                # Duraklatma kontrolü
-                if self.bot.is_paused or self.bot._shutdown_event.is_set():
-                    continue
-                
-                # Grupları al - DİNAMİK GRUP LİSTESİ
-                groups = await self._get_groups()
-                logger.info(f"📊 Aktif Grup: {len(groups)} | ⚠️ Devre Dışı: {len(self.bot.error_groups)}")
-                
-                # Mesaj gönderimleri için sayaç
-                tur_mesaj_sayisi = 0
-                
-                # Her gruba mesaj gönder
-                for group in groups:
-                    # Her döngüde duraklatma/kapatma kontrolü
-                    if not self.bot.is_running or self.bot._shutdown_event.is_set():
-                        logger.info("Grup mesaj görevi: Kapatma sinyali alındı")
-                        break
-                        
-                    if self.bot.is_paused:
-                        logger.info("Grup mesaj görevi: Duraklatma sinyali alındı")
-                        await self.bot.check_paused()
-                        continue
-                    
-                    # Mesaj göndermeyi dene
-                    success = await self._send_message_to_group(group)
-                    if success:
-                        tur_mesaj_sayisi += 1
-                        logger.info(f"✅ Mesaj gönderildi: {group.title}")
-                    
-                    # Mesajlar arasında bekle - kesintiye uğrayabilir
-                    await self.bot.interruptible_sleep(random.randint(8, 15))
-                
-                # Tur istatistiklerini göster
-                logger.info(f"✉️ Turda: {tur_mesaj_sayisi} | 📈 Toplam: {self.bot.sent_count}")
-                
-                # Duraklatma kontrolü
-                if self.bot.is_paused:
-                    await self.bot.check_paused()
-                    continue
-                
-                # Tur sonrası bekle - kesintiye uğrayabilir
-                wait_time = 8 * 60  # 8 dakika
-                logger.info(f"⏳ Bir sonraki tur için {wait_time//60} dakika bekleniyor...")
-                await self.bot.interruptible_sleep(wait_time)
-                
-            except asyncio.CancelledError:
-                logger.info("Grup mesaj görevi iptal edildi")
-                break
-            except Exception as e:
-                logger.error(f"Grup mesaj döngüsü hatası: {str(e)}", exc_info=True)
-                # Hata durumunda bekle - kesintiye uğrayabilir
-                await self.bot.interruptible_sleep(60)
-        
-        logger.info("Grup mesaj görevi sonlandı")
-    
+        Bu metot, botun aktif olduğu gruplara mesaj gönderme işlemini yönetir.
+        """
+        await self.bot.group_handler.process_group_messages()
+
     async def process_personal_invites(self):
-        """Özel davetleri işler - daha sık çalışacak şekilde optimize edildi"""
-        logger.info("Özel davet gönderme görevi başlatıldı")
+        """
+        Kişisel davetleri işler.
         
-        while self.bot.is_running and not self.bot._shutdown_event.is_set():
-            try:
-                # Duraklatma kontrolü
-                if self.bot.is_paused:
-                    await self.bot.check_paused()
-                    continue
-                
-                # Davet aralığını dakika cinsinden al (daha sık davet gönderimi için)
-                interval_minutes = self.bot.pm_delays['davet_interval']
-                
-                # Daha kısa bekleme süresi - 1 saniyelik adımlarla kontrol et
-                for _ in range(interval_minutes * 60):
-                    if not self.bot.is_running or self.bot._shutdown_event.is_set():
-                        logger.info("Davet işleme görevi: Kapatma sinyali alındı")
-                        return
-                    
-                    if self.bot.is_paused:
-                        await self.bot.check_paused()
-                        break
-                    
-                    await asyncio.sleep(1)
-                
-                # Durum kontrolü
-                if not self.bot.is_running or self.bot._shutdown_event.is_set():
-                    break
-                
-                if self.bot.is_paused:
-                    await self.bot.check_paused()
-                    continue
-                
-                # Davet edilecek kullanıcıları al
-                users_to_invite = self.bot.db.get_users_to_invite(limit=5)
-                if not users_to_invite:
-                    logger.info("📪 Davet edilecek kullanıcı bulunamadı")
-                    continue
-                
-                logger.info(f"📩 {len(users_to_invite)} kullanıcıya davet gönderiliyor...")
-                
-                # Her kullanıcıya davet gönder
-                for user_id, username in users_to_invite:
-                    # Her davet öncesi duraklatma/kapatma kontrolü
-                    if not self.bot.is_running or self.bot._shutdown_event.is_set():
-                        logger.info("Davet işleme görevi: Kapatma sinyali alındı")
-                        break
-                    
-                    if self.bot.is_paused:
-                        await self.bot.check_paused()
-                        continue
-                    
-                    # Saatlik limiti kontrol et
-                    if self.bot.pm_state['hourly_count'] >= self.bot.pm_delays['hourly_limit']:
-                        logger.warning("⚠️ Saatlik mesaj limiti doldu!")
-                        break
-                    
-                    # Davet mesajı gönder
-                    await self.bot.invite_user(user_id, username)
-                    
-                    # Davetler arasında bekle - kesintiye uğrayabilir
-                    await self.bot.interruptible_sleep(random.randint(30, 60))  # Daha kısa bekleme
-                
-            except asyncio.CancelledError:
-                logger.info("Davet işleme görevi iptal edildi")
-                break
-            except Exception as e:
-                logger.error(f"Özel davet hatası: {str(e)}")
-                # Hatada bekle - kesintiye uğrayabilir  
-                await self.bot.interruptible_sleep(60)
-        
-        logger.info("Davet işleme görevi sonlandı")
+        Bu metot, botun yeni kullanıcılara kişisel davet gönderme işlemini yönetir.
+        """
+        await self.bot.user_handler.process_personal_invites()
     
     async def periodic_cleanup(self):
-        """Periyodik temizleme işlemleri yapar"""
+        """
+        Periyodik temizleme işlemleri yapar.
+        
+        Bu metot, belirli aralıklarla botun durumunu kontrol eder,
+        hata sayaçlarını temizler ve süresi dolmuş hata kayıtlarını siler.
+        """
         logger.info("Periyodik temizleme görevi başlatıldı")
         
         while self.bot.is_running and not self.bot._shutdown_event.is_set():
             try:
-                # Her 10 dakikada bir çalış
-                await self.bot.interruptible_sleep(600)
+                # Her saat başı
+                if datetime.now().minute == 0:
+                    # Hata sayaçlarını temizle
+                    self.bot.error_counter.clear()
+                    logger.info("Hata sayaçları temizlendi")
+                    
+                    # Süresi dolmuş hata gruplarını temizle
+                    cleared_errors = self.bot.db.clear_expired_error_groups()
+                    if cleared_errors:
+                        logger.info(f"{cleared_errors} adet süresi dolmuş hata kaydı temizlendi")
+                        # Hata listesini güncelle
+                        self.bot._load_error_groups()
                 
-                # Duraklatma kontrolü
+                # Her 10 dakikada bir 
+                if datetime.now().minute % 10 == 0:
+                    # Rate limit durumunu resetle
+                    current_time = datetime.now()
+                    if self.bot.pm_state['hour_start'] and (current_time - self.bot.pm_state['hour_start']).total_seconds() >= 3600:
+                        self.bot.pm_state['hourly_count'] = 0
+                        self.bot.pm_state['hour_start'] = current_time
+                        self.bot.pm_state['burst_count'] = 0
+                        logger.info("Saatlik mesaj limitleri sıfırlandı")
+                
+                # Her dakika
+                # FloodWait durumunu kontrol et
+                if self.bot.flood_wait_active and self.bot.flood_wait_end_time:
+                    if datetime.now() > self.bot.flood_wait_end_time:
+                        self.bot.flood_wait_active = False
+                        logger.info("FloodWait süresi doldu, normal işleme devam ediliyor")
+                
+                # Duraklatma durumunu kontrol et
                 if self.bot.is_paused:
                     await self.bot.check_paused()
                     continue
                 
-                # Süresi dolmuş hataları temizle  
-                cleared_errors = self.bot.db.clear_expired_error_groups()
-                if cleared_errors > 0:
-                    logger.info(f"{cleared_errors} adet süresi dolmuş hata kaydı temizlendi")
-                    # Hafızadaki hata listesini de güncelle
-                    self.bot._load_error_groups()
-                
-                # Aktivite listesini belirli bir boyutta tut
-                if len(self.bot.displayed_users) > 500:
-                    logger.info(f"Aktivite takip listesi temizleniyor ({len(self.bot.displayed_users)} -> 100)")
-                    # En son eklenen 100 kullanıcıyı tut
-                    self.bot.displayed_users = set(list(self.bot.displayed_users)[-100:])
+                # Her 1 dakika
+                await asyncio.sleep(60)
                 
             except asyncio.CancelledError:
-                logger.info("Periyodik temizleme görevi iptal edildi")
+                logger.info("Periyodik temizleme iptal edildi")
                 break
             except Exception as e:
                 logger.error(f"Periyodik temizleme hatası: {str(e)}")
+                await asyncio.sleep(60)
         
         logger.info("Periyodik temizleme görevi sonlandı")
                 
     async def manage_error_groups(self):
-        """Başlangıçta grup hata kayıtlarını yönetir"""
+        """
+        Başlangıçta grup hata kayıtlarını yönetir.
+        
+        Bu metot, bot başladığında veritabanındaki hata kayıtlarını
+        okur ve kullanıcıya bu kayıtları nasıl yöneteceğine dair
+        seçenekler sunar.
+        """
         error_groups = self.bot.db.get_error_groups()
         if not error_groups:
             logger.info("Hata veren grup kaydı bulunmadı")
@@ -281,7 +245,7 @@ class BotTasks:
         print(f"{Fore.GREEN}2){Style.RESET_ALL} Tümünü temizle (yeniden deneme)")
         
         try:
-            selection = await self.bot.tasks._async_input("\nSeçiminiz (1-2): ") or "1"
+            selection = await self._async_input("\nSeçiminiz (1-2): ") or "1"
             
             if selection == "2":
                 cleared = self.bot.db.clear_all_error_groups()
@@ -296,7 +260,14 @@ class BotTasks:
             logger.error(f"Hata kayıtları yönetim hatası: {str(e)}")
     
     async def _get_groups(self) -> List:
-        """Aktif grupları getirir - her seferinde yeni liste oluşturur"""
+        """
+        Aktif grupları getirir.
+        
+        Bu metot, botun erişebildiği tüm aktif grupların listesini getirir.
+        
+        Returns:
+            Aktif grupların listesi.
+        """
         groups = []
         try:
             # Mevcut grupları ve hata veren grupları kaydet
@@ -328,14 +299,24 @@ class BotTasks:
                 f"Grup listeleme için {e.seconds} saniye bekleniyor",
                 {'wait_time': e.seconds}
             )
-            await asyncio.sleep(e.seconds + 5)  # Biraz daha fazla bekle
+            await asyncio.sleep(e.seconds + 5)  # Biraz daha bekle
         except Exception as e:
             logger.error(f"Grup getirme hatası: {str(e)}")
         
         return groups
     
     async def _send_message_to_group(self, group) -> bool:
-        """Gruba mesaj gönderir"""
+        """
+        Gruba mesaj gönderir.
+        
+        Bu metot, belirtilen gruba rastgele bir mesaj gönderir.
+        
+        Args:
+            group: Mesaj gönderilecek grup nesnesi.
+        
+        Returns:
+            Mesaj başarıyla gönderildiyse True, aksi halde False.
+        """
         try:
             # Kapatma kontrolü
             if self.bot._shutdown_event.is_set() or not self.bot.is_running:
