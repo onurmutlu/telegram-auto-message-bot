@@ -1,4 +1,18 @@
-# Yeni bir dosya oluşturun
+"""
+# ============================================================================ #
+# Dosya: adaptive_rate_limiter.py
+# Yol: /Users/siyahkare/code/telegram-bot/bot/utils/adaptive_rate_limiter.py
+# İşlev: Akıllı ve adaptif hız sınırlayıcı sınıf
+#
+# Build: 2025-04-05
+# Versiyon: v3.5.0
+# ============================================================================ #
+#
+# Bu modül, Telegram API sınırlarına otomatik uyum sağlayan ve hata durumlarına
+# göre kendini ayarlayan gelişmiş bir hız sınırlayıcı sınıfı sağlar.
+#
+# ============================================================================ #
+"""
 
 import time
 import random
@@ -9,26 +23,34 @@ logger = logging.getLogger(__name__)
 
 class AdaptiveRateLimiter:
     """
-    Telegram API sınırlarını otomatik algılayan ve uyum sağlayan akıllı hız sınırlayıcı.
-    Hatalardan öğrenir ve otomatik olarak beklemeleri ayarlar.
+    Adaptif hız sınırlama sınıfı.
+    Rate limit hatalarına göre otomatik uyarlanan bir hız sınırlayıcı.
     """
     
-    def __init__(self, initial_rate=5, initial_period=60, cooldown_factor=2):
+    def __init__(self, initial_rate=3, period=60, error_backoff=1.5, max_jitter=2.0):
         """
         Args:
-            initial_rate: Başlangıç hızı (işlem/dönem)
-            initial_period: Başlangıç periyodu (saniye)
-            cooldown_factor: Hata durumunda bekleme çarpanı 
+            initial_rate: Başlangıç hızı (mesaj/period)
+            period: Periyot (saniye)
+            error_backoff: Hata durumunda hız azaltma çarpanı
+            max_jitter: Maksimum rastgele sapma
         """
-        self.max_rate = initial_rate  # Maksimum izin verilen işlem sayısı
-        self.current_rate = initial_rate  # Mevcut hız
-        self.period = initial_period  # Dönem süresi (saniye)
-        self.cooldown_factor = cooldown_factor  # Hata sonrası yavaşlama faktörü
-        self.last_requests = []  # Son isteklerin zamanı
-        self.error_count = 0  # Hata sayacı
-        self.last_error_time = None  # Son hata zamanı
-        self.cooldown_until = datetime.now()  # Soğuma süresi
-        self.backoff_time = 10  # Başlangıç bekleme süresi (saniye)
+        self.initial_rate = initial_rate  # Düşürüldü
+        self.current_rate = initial_rate * 0.5  # İlk başta 1.5 mesaj/dakika ile başla
+        self.period = period
+        self.error_backoff = error_backoff
+        self.max_jitter = max_jitter
+        
+        # Kullanım takibi
+        self.usage_times = []
+        self.last_wait = 0
+        self.consecutive_errors = 0
+        self.consecutive_success = 0
+        
+        logger.debug(
+            f"AdaptiveRateLimiter başlatıldı: {self.current_rate}/{self.period}s, "
+            f"error_backoff={error_backoff}, max_jitter={max_jitter}"
+        )
     
     def is_allowed(self):
         """Yeni bir istek göndermenin uygun olup olmadığını kontrol eder."""
@@ -101,7 +123,7 @@ class AdaptiveRateLimiter:
         wait_seconds = max(0, (earliest_next_time - now).total_seconds())
         
         # Biraz rastgelelik ekle (1-2 saniye)
-        jitter = random.uniform(1, 3)
+        jitter = random.uniform(1, self.max_jitter)
         total_wait = wait_seconds + jitter
         
         return total_wait
@@ -131,3 +153,16 @@ class AdaptiveRateLimiter:
         self.cooldown_until = datetime.now()
         # Hızı yavaşça tekrar artır
         self.current_rate = max(1, min(self.max_rate, self.current_rate + 1))
+
+    def increase_rate(self, factor=1.2):
+        """
+        Hız limitini artırır
+        
+        Args:
+            factor: Artış faktörü (1.2 = %20 artış)
+        """
+        new_rate = self.current_rate * factor
+        max_rate = self.initial_rate * 3  # En fazla başlangıç değerinin 3 katı
+        self.current_rate = min(new_rate, max_rate)
+        logger.debug(f"Rate limiter rate artırıldı: {self.current_rate:.2f} mesaj/dakika")
+        return self.current_rate

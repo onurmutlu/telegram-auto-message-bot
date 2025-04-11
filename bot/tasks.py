@@ -33,6 +33,7 @@ from typing import List, Dict, Any, Optional
 from colorama import Fore, Style
 from tabulate import tabulate
 from telethon import errors
+from bot.utils.rate_limiter import RateLimiter 
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,8 @@ class BotTasks:
         """
         self.bot = bot
         self.active_tasks = []
+        task_limit = 100  # Define a default task limit
+        self.task_limiter = RateLimiter(max_requests=task_limit, time_window=60)
         
     async def start_tasks(self):
         """

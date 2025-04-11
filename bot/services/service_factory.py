@@ -2,99 +2,85 @@
 # ============================================================================ #
 # Dosya: service_factory.py
 # Yol: /Users/siyahkare/code/telegram-bot/bot/services/service_factory.py
-# İşlev: Servis nesnelerinin merkezi oluşturma fabrikası
+# İşlev: Servis nesnelerini oluşturan fabrika sınıfı.
+#
+# © 2025 SiyahKare Yazılım - Tüm Hakları Saklıdır
 # ============================================================================ #
 """
 
-import logging
 import asyncio
-from typing import Dict, Any, Optional
-
-# Servis sınıflarını içe aktar
-from bot.services.dm_service import DirectMessageService
-from bot.services.group_service import GroupService
-from bot.services.reply_service import ReplyService
-from bot.services.user_service import UserService
+import logging
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 class ServiceFactory:
-    """Servis nesneleri üretir"""
+    """
+    Servis nesnelerini oluşturan fabrika sınıfı.
     
-    def __init__(self, client, config, db, shutdown_event=None):
-        """ServiceFactory sınıfını başlatır"""
+    Bu sınıf, çeşitli servis tiplerini oluşturmaktan sorumludur. Tüm servislerin
+    aynı yapılandırma ve bağımlılıkları paylaşmasını sağlar.
+    
+    Attributes:
+        client: Telethon istemcisi
+        config: Uygulama yapılandırması
+        db: Veritabanı bağlantısı
+        stop_event: Durdurma sinyali için asyncio.Event nesnesi
+    """
+    
+    def __init__(self, client: Any, config: Any, db: Any, stop_event: asyncio.Event):
+        """
+        ServiceFactory sınıfının başlatıcısı.
+        
+        Args:
+            client: Telethon istemcisi
+            config: Uygulama yapılandırması
+            db: Veritabanı bağlantısı
+            stop_event: Durdurma sinyali için asyncio.Event nesnesi
+        """
         self.client = client
         self.config = config
         self.db = db
-        self.stop_event = shutdown_event
-        self.services = {}  # Önbelleğe alınmış servisler
+        self.stop_event = stop_event
         
-    def create_service(self, service_type: str) -> Any:
+    def create_service(self, service_type: str) -> Optional[Any]:
         """
-        Belirtilen türde bir servis oluşturur.
+        Belirtilen tipte servis oluşturur.
         
         Args:
-            service_type: Servis türü ("group", "dm", "reply", "user", vb.)
-        
-        Returns:
-            İstenilen türde servis nesnesi
-        """
-        # Önbelleğe bakarak daha önce oluşturulmuş servisi varsa döndür
-        if service_type in self.services:
-            logger.debug(f"{service_type} servisi önbellekten alındı")
-            return self.services[service_type]
+            service_type: Servis tipi ('user', 'group', 'dm', vb.)
             
-        logger.info(f"{service_type} servisi oluşturuluyor...")
-        
-        if service_type == "group":
-            service = GroupService(
-                self.client, 
-                self.db, 
-                self.config,
-                self.stop_event
-            )
-        elif service_type == "dm":
-            service = DirectMessageService(
-                self.client, 
-                self.config, 
-                self.db, 
-                self.stop_event
-            )
-        elif service_type == "reply":
-            service = ReplyService(
-                self.client, 
-                self.config, 
-                self.db, 
-                self.stop_event
-            )
-        elif service_type == "user":
-            service = UserService(
-                self.client,
-                self.db,
-                self.config
-            )
-        else:
-            raise ValueError(f"Bilinmeyen servis türü: {service_type}")
-            
-        # Servisi önbelleğe al
-        self.services[service_type] = service
-        logger.info(f"{service_type} servisi oluşturuldu")
-        return service
-        
-    def get_all_services(self) -> Dict[str, Any]:
-        """
-        Tüm oluşturulmuş servisleri döndürür.
-        
         Returns:
-            Dict[str, Any]: Servis adı ve nesne eşleşmelerini içeren sözlük
+            Optional[Any]: Oluşturulan servis nesnesi veya None
         """
-        return self.services
-        
-    def stop_all_services(self) -> None:
-        """Tüm servisleri durdurur."""
-        logger.info("Tüm servisler durduruluyor...")
-        self.stop_event.set()
-        for name, service in self.services.items():
-            if hasattr(service, "running"):
-                service.running = False
-            logger.info(f"{name} servisi durduruldu")
+        try:
+            if service_type == "user":
+                from bot.services.user_service import UserService
+                return UserService(self.client, self.config, self.db, self.stop_event)
+                
+            elif service_type == "group":
+                from bot.services.group_service import GroupService
+                return GroupService(self.client, self.config, self.db, self.stop_event)
+                
+            elif service_type == "reply":
+                from bot.services.reply_service import ReplyService
+                return ReplyService(self.client, self.config, self.db, self.stop_event)
+                
+            elif service_type == "dm":
+                from bot.services.dm_service import DMService
+                return DMService(self.client, self.config, self.db, self.stop_event)
+                
+            elif service_type == "invite":
+                from bot.services.invite_service import InviteService
+                return InviteService(self.client, self.config, self.db, self.stop_event)
+                
+            else:
+                logger.warning(f"Bilinmeyen servis tipi: {service_type}")
+                return None
+                
+        except ImportError as e:
+            logger.error(f"Servis modülü içe aktarılamadı ({service_type}): {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"Servis oluşturulamadı ({service_type}): {str(e)}")
+            return None

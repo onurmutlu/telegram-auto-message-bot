@@ -29,7 +29,7 @@ import logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 import asyncio
-from bot.core import TelegramBot
+from main import TelegramBot  # Ana TelegramBot sınıfını direk main.py'den al
 from database.user_db import UserDatabase
 from dotenv import load_dotenv
 from config.settings import Config

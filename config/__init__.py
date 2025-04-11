@@ -1,7 +1,17 @@
-# Bu dosya, "from config.config import Config" ifadesini düzgün çalıştırır
+"""
+# ============================================================================ #
+# Dosya: __init__.py
+# Yol: /Users/siyahkare/code/telegram-bot/config/__init__.py
+# İşlev: Config modülü için paket başlatıcı.
+#
+# © 2025 SiyahKare Yazılım - Tüm Hakları Saklıdır
+# ============================================================================ #
+"""
 
-# settings.py'daki Config sınıfını yeniden dışa aktarın
+# Config sınıfını doğrudan dışa aktarır
 from .settings import Config
+from .config import get_default_config
 
-# Bu sayede "from config.config import Config" yerine 
-# "from config import Config" şeklinde import edilebilir
+# __all__ tanımlayarak import * kullanıldığında
+# sadece bu belirtilen öğeler içe aktarılır
+__all__ = ['Config', 'get_default_config']

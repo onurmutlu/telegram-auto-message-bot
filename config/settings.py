@@ -2,157 +2,153 @@
 # ============================================================================ #
 # Dosya: settings.py
 # Yol: /Users/siyahkare/code/telegram-bot/config/settings.py
-# İşlev: Telegram bot yapılandırma ayarlarını yönetir.
+# İşlev: Bot yapılandırma ayarlarını .env dosyasından yükler.
 #
-# Build: 2025-04-01
-# Versiyon: v3.4.0
-# ============================================================================ #
-#
-# Bu modül, Telegram bot uygulamasının yapılandırma ayarlarını yönetmek için kullanılır.
-# Başlıca işlevleri şunlardır:
-#   - Ortam değişkenlerinden yapılandırma ayarlarını yükleme
-#   - Dosyalardan (örneğin, config.json, invites.json) yapılandırma ayarlarını yükleme
-#   - Varsayılan yapılandırma ayarlarını tanımlama
-#   - Yapılandırma ayarlarını diğer modüller tarafından erişilebilir hale getirme
-#
+# © 2025 SiyahKare Yazılım - Tüm Hakları Saklıdır
 # ============================================================================ #
 """
+
 import os
-import json
 import logging
-from pathlib import Path
-from typing import Dict, List, Any, Optional
+from datetime import datetime
+from typing import Dict, Any
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
 class Config:
     """
-    Bot yapılandırma ayarlarını yönetir.
+    Bot yapılandırma sınıfı.
+    
+    Bu sınıf, botun çalışması için gerekli yapılandırma ayarlarını .env dosyasından
+    veya ortam değişkenlerinden yükler.
     """
-
-    BASE_DIR = Path(__file__).resolve().parent.parent
-    DATA_DIR = BASE_DIR / 'data'
-    RUNTIME_DIR = BASE_DIR / 'runtime'
-    SESSION_DIR = RUNTIME_DIR / 'sessions'
-    DATABASE_DIR = RUNTIME_DIR / 'database'
-    LOGS_DIR = RUNTIME_DIR / 'logs'
-
-    DATABASE_PATH = DATABASE_DIR / 'users.db'
-    SESSION_PATH = SESSION_DIR / 'member_session'
-    LOG_FILE_PATH = LOGS_DIR / 'bot.log'
-    MESSAGE_TEMPLATES_PATH = DATA_DIR / 'messages.json'
-    INVITE_TEMPLATES_PATH = DATA_DIR / 'invites.json'
-    RESPONSE_TEMPLATES_PATH = DATA_DIR / 'responses.json'
-    CONFIG_PATH = DATA_DIR / 'config.json'
-
-    def __init__(self, config_path="data/config.json", 
-                 messages_path="data/messages.json",
-                 invites_path="data/invites.json",
-                 responses_path="data/responses.json"):
+    
+    def __init__(self, env_path: str = ".env"):
         """
-        Config sınıfının başlatıcı metodu.
+        Config sınıfının başlatıcısı.
+        
+        Args:
+            env_path: .env dosyasının yolu
         """
-        self.config_path = config_path
-        self.messages_path = messages_path
-        self.invites_path = invites_path
-        self.responses_path = responses_path
+        # .env dosyasını yükle
+        self.load_success = load_dotenv(env_path)
+        if not self.load_success:
+            logger.warning(f".env dosyası bulunamadı: {env_path}, ortam değişkenleri kullanılacak")
         
-        self.data = self._load_config_data()  # Metod adını düzelt
-        self.messages = self._load_messages()
-        self.invites = self._load_invites()
-        self.responses = self._load_responses_data()  # Metod adını düzelt
+        # Telegram yapılandırması
+        self.telegram = self._load_telegram_config()
         
-        self.message_templates = {}
-        self.invite_templates = {}
-        self.response_templates = {}
-        self.flirty_messages = []
+        # Veritabanı yapılandırması
+        self.database = self.db = self._load_database_config()
         
-        # Yükleme fonksiyonlarını çağır
-        self.load_message_templates()
-        self.load_invite_templates()
-        self.load_response_templates()
-        self.load_flirty_messages()
+        # Mesajlaşma ayarları
+        self.messaging = self._load_messaging_config()
         
-        # Log
+        # Genel ayarlar
+        self.settings = self._load_general_settings()
+        
         logger.info("Yapılandırma yüklendi")
-
-    @classmethod
-    def load_config(cls):
+    
+    def _load_telegram_config(self) -> Any:
         """
-        Yapılandırma yükler ve döndürür.
+        Telegram yapılandırmasını yükler.
         
         Returns:
-            Config: Doldurulmuş yapılandırma nesnesi
+            Any: Telegram yapılandırması
         """
-        return cls()  # Sınıfın yeni bir örneğini döndür
-
-    def load_message_templates(self):
+        class TelegramConfig:
+            def __init__(self):
+                self.api_id = os.environ.get('API_ID')
+                self.api_hash = os.environ.get('API_HASH')
+                self.bot_token = os.environ.get('BOT_TOKEN')
+                self.session_name = os.environ.get('SESSION_NAME', 'bot_session')
+                
+                # Opsiyonel proxy ayarları
+                proxy_host = os.environ.get('PROXY_HOST')
+                proxy_port = os.environ.get('PROXY_PORT')
+                proxy_username = os.environ.get('PROXY_USERNAME')
+                proxy_password = os.environ.get('PROXY_PASSWORD')
+                
+                if proxy_host and proxy_port:
+                    self.proxy = {
+                        'proxy_type': os.environ.get('PROXY_TYPE', 'socks5'),
+                        'addr': proxy_host,
+                        'port': int(proxy_port),
+                        'username': proxy_username,
+                        'password': proxy_password
+                    }
+                else:
+                    self.proxy = None
+        
+        return TelegramConfig()
+    
+    def _load_database_config(self) -> Any:
         """
-        Mesaj şablonlarını yükler.
+        Veritabanı yapılandırmasını yükler.
+        
+        Returns:
+            Any: Veritabanı yapılandırması
         """
-        try:
-            # Mesajları doğrudan messages dosyasından al
-            self.message_templates = self.messages
-            logger.info(f"{len(self.message_templates)} mesaj şablonu yüklendi")
-        except Exception as e:
-            logger.error(f"Mesaj şablonları yüklenirken hata: {e}")
-            self.message_templates = {}
-
-    def load_invite_templates(self):
+        class DatabaseConfig:
+            def __init__(self):
+                self.type = os.environ.get('DB_TYPE', 'sqlite')
+                
+                # SQLite için
+                if self.type.lower() == 'sqlite':
+                    self.path = os.environ.get('DB_PATH', 'data/bot.db')
+                    
+                # PostgreSQL için
+                elif self.type.lower() == 'postgres':
+                    self.host = os.environ.get('DB_HOST', 'localhost')
+                    self.port = int(os.environ.get('DB_PORT', '5432'))
+                    self.user = os.environ.get('DB_USER')
+                    self.password = os.environ.get('DB_PASSWORD')
+                    self.database = os.environ.get('DB_NAME')
+        
+        return DatabaseConfig()
+    
+    def _load_messaging_config(self) -> Any:
         """
-        Davet şablonlarını yükler.
+        Mesajlaşma yapılandırmasını yükler.
+        
+        Returns:
+            Any: Mesajlaşma yapılandırması
         """
-        try:
-            # Davet şablonlarını doğrudan invites dosyasından al
-            self.invite_templates = self.invites
-            logger.info(f"{len(self.invite_templates)} davet şablonu yüklendi")
-        except Exception as e:
-            logger.error(f"Davet şablonları yüklenirken hata: {e}")
-            self.invite_templates = {}
-
-    def load_response_templates(self):
+        class MessagingConfig:
+            def __init__(self):
+                self.templates_path = os.environ.get('TEMPLATES_PATH', 'data/messages.json')
+                self.invites_path = os.environ.get('INVITES_PATH', 'data/invites.json')
+                self.responses_path = os.environ.get('RESPONSES_PATH', 'data/responses.json')
+        
+        return MessagingConfig()
+    
+    def _load_general_settings(self) -> Any:
         """
-        Yanıt şablonlarını yükler.
+        Genel ayarları yükler.
+        
+        Returns:
+            Any: Genel ayarlar
         """
-        try:
-            # Yanıtları doğrudan responses dosyasından al
-            self.response_templates = self.responses.get("flirty", [])
-            logger.info(f"{len(self.response_templates)} yanıt şablonu yüklendi")
-        except Exception as e:
-            logger.error(f"Yanıt şablonları yüklenirken hata: {e}")
-            self.response_templates = []  # Boş liste ile başlat, None değil
-
-    def load_flirty_messages(self):
-        """
-        Flirty mesajları yükler.
-        """
-        try:
-            # Flirty mesajları doğrudan responses dosyasından al
-            self.flirty_messages = self.responses.get("flirty", [])
-            logger.info(f"{len(self.flirty_messages)} flirty mesaj yüklendi")
-        except Exception as e:
-            logger.error(f"Flirty mesajlar yüklenirken hata: {e}")
-            self.flirty_messages = []
-        return self.flirty_messages
-
-    def create_directories(self):
-        """
-        Gerekli dizinleri oluşturur.
-        Bu dizinler, oturum dosyaları, veritabanı dosyaları ve log dosyaları için kullanılır.
-        """
-        os.makedirs(self.SESSION_DIR, exist_ok=True)
-        os.makedirs(self.DATABASE_DIR, exist_ok=True)
-        os.makedirs(self.LOGS_DIR, exist_ok=True)
-        os.makedirs(self.DATABASE_DIR / 'backups', exist_ok=True)
-
+        class GeneralSettings:
+            def __init__(self):
+                self.environment = os.environ.get('ENVIRONMENT', 'production')
+                self.debug_mode = os.environ.get('DEBUG_MODE', 'false').lower() == 'true'
+                self.admin_groups = self._parse_list(os.environ.get('ADMIN_GROUPS', ''))
+                self.super_users = self._parse_list(os.environ.get('SUPER_USERS', ''))
+            
+            def _parse_list(self, value: str) -> list:
+                return [item.strip() for item in value.split(',')] if value else []
+        
+        return GeneralSettings()
+    
     @property
     def env(self):
         """
         Ortam bilgisini döndürür.
         Varsayılan olarak "production" değerini döndürür.
         """
-        return os.getenv("ENVIRONMENT", "production")
+        return self.settings.environment
 
     @property
     def debug(self):
@@ -160,78 +156,18 @@ class Config:
         Debug modunu döndürür.
         Varsayılan olarak False değerini döndürür.
         """
-        return self.debug_mode
+        return self.settings.debug_mode
 
     @property
     def admin_groups(self):
         """
         Yönetici gruplarını döndürür (Yönetici/Kurucu olduğunuz gruplar).
-        Ortam değişkeninden yükler ve virgülle ayrılmış değerleri liste olarak döndürür.
         """
-        admin_groups_str = os.getenv("ADMIN_GROUPS", "")
-        return [group.strip() for group in admin_groups_str.split(",")] if admin_groups_str else []
+        return self.settings.admin_groups
 
     @property
     def super_users(self):
         """
         Süper kullanıcıların listesini döndürür.
-        Ortam değişkeninden yükler ve virgülle ayrılmış değerleri liste olarak döndürür.
         """
-        super_users_str = os.getenv("SUPER_USERS", "")
-        return [user.strip() for user in super_users_str.split(",")] if super_users_str else []
-
-    def _load_messages(self):
-        """
-        Mesajlar dosyasını yükler.
-        """
-        try:
-            with open(self.messages_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            logger.error(f"Mesajlar dosyası bulunamadı: {self.messages_path}")
-            return []
-        except json.JSONDecodeError:
-            logger.error(f"Mesajlar dosyası JSON formatında değil: {self.messages_path}")
-            return []
-
-    def _load_invites(self):
-        """
-        Davetler dosyasını yükler.
-        """
-        try:
-            with open(self.invites_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            logger.error(f"Davetler dosyası bulunamadı: {self.invites_path}")
-            return {}
-        except json.JSONDecodeError:
-            logger.error(f"Davetler dosyası JSON formatında değil: {self.invites_path}")
-            return {}
-
-    def _load_config_data(self):  # Metod adını düzelt
-        """
-        Yapılandırma dosyasını yükler.
-        """
-        try:
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            logger.error(f"Yapılandırma dosyası bulunamadı: {self.config_path}")
-            return {}
-        except json.JSONDecodeError:
-            logger.error(f"Yapılandırma dosyası JSON formatında değil: {self.config_path}")
-            return {}
-
-    def _load_responses_data(self):  # Metod adını düzelt
-        """
-        Yanıtlar dosyasını yükler.
-        """
-        try:
-            with open(self.responses_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            logger.error(f"Yanıtlar dosyası bulunamadı: {self.responses_path}")
-            return {}
-        except json.JSONDecodeError:
-            logger.error(f"Yanıtlar dosyası JSON formatında değil: {self.responses_path}")
-            return {}
+        return self.settings.super_users

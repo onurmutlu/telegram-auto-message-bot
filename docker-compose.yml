@@ -1,0 +1,27 @@
+version: '3.8'
+services:
+  telegram_bot_customer1:
+    build: .
+    container_name: telegram_bot_customer1
+    environment:
+      - CUSTOMER_ID=customer1
+      - TELEGRAM_API_TOKEN=your_api_token_1
+    volumes:
+      - ./data/customer1:/app/data
+    networks:
+      - telegram_bot_network
+
+  telegram_bot_customer2:
+    build: .
+    container_name: telegram_bot_customer2
+    environment:
+      - CUSTOMER_ID=customer2
+      - TELEGRAM_API_TOKEN=your_api_token_2
+    volumes:
+      - ./data/customer2:/app/data
+    networks:
+      - telegram_bot_network
+
+networks:
+  telegram_bot_network:
+    driver: bridge

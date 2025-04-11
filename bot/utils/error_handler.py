@@ -36,14 +36,17 @@ class ErrorHandler:
     Ayrıca, Telethon kütüphanesinden gelen logları özelleştirerek daha anlamlı hale getirir.
     """
     
-    def __init__(self, bot):
+    def __init__(self, db, config): # Removed bot dependency, pass db and config directly
         """
         ErrorHandler sınıfının yapılandırıcısı.
 
         Args:
-            bot: Bot nesnesi.
+            db: UserDatabase nesnesi.
+            config: Config nesnesi.
         """
-        self.bot = bot
+        # self.bot = bot # Removed bot reference
+        self.db = db
+        self.config = config
         self.error_stats = {}
         self.telethon_log_cache = {}  # Telethon logları için önbellek
         self.last_log_time = {}  # Son log zamanı
@@ -169,11 +172,15 @@ class ErrorHandler:
         Grup hata kayıtlarını yönetir - iyileştirilmiş tablo formatı.
 
         Bu metot, veritabanından hata gruplarını alır ve konsola tablo formatında yazdırır.
-        Kullanıcıya hata kayıtlarını koruma veya temizleme seçeneği sunar.
+        Hata temizleme işlemi artık main.py'deki argümanla yönetilir.
         """
-        error_groups = self.bot.db.get_error_groups()
+        if not hasattr(self.db, 'get_error_groups'):
+             logger.error("Veritabanı nesnesinde 'get_error_groups' metodu bulunamadı.")
+             return
+
+        error_groups = self.db.get_error_groups()
         if not error_groups:
-            logger.info("Hata veren grup kaydı bulunmadı")
+            logger.info("Hata veren grup kaydı bulunmadı.")
             return
         
         # Konsola hata gruplarını göster - İYİLEŞTİRİLMİŞ TABLO FORMATI
@@ -208,34 +215,11 @@ class ErrorHandler:
         )
         
         print(table_output)
-        
-        # Kullanıcıya sor - YENİ: SINIRLI SÜRE (10 SAN) BEKLETİP VARSAYILAN OLARAK DEVAM ET
-        print(f"\n{Fore.CYAN}Hata kayıtlarını ne yapmak istersiniz? (10 saniye içinde yanıt vermezseniz kayıtlar korunacak){Style.RESET_ALL}")
-        print(f"{Fore.GREEN}1){Style.RESET_ALL} Kayıtları koru (varsayılan)")
-        print(f"{Fore.GREEN}2){Style.RESET_ALL} Tümünü temizle (yeniden deneme)")
-        
-        try:
-            # 10 saniye timeout ile input bekle
-            selection = await asyncio.wait_for(
-                self.bot._async_input("\nSeçiminiz (1-2): "), 
-                timeout=10.0
-            ) or "1"
-            
-            if selection == "2":
-                cleared = self.bot.db.clear_all_error_groups()
-                self.bot.error_groups.clear()
-                self.bot.error_reasons.clear()
-                logger.info(f"Tüm hata kayıtları temizlendi ({cleared} kayıt)")
-                print(f"{Fore.GREEN}✅ {cleared} adet hata kaydı temizlendi{Style.RESET_ALL}")
-            else:
-                logger.info("Hata kayıtları korundu")
-                print(f"{Fore.CYAN}ℹ️ Hata kayıtları korundu{Style.RESET_ALL}")
-        except asyncio.TimeoutError:
-            logger.info("Süre doldu, hata kayıtları korunuyor")
-            print(f"{Fore.CYAN}⏱️ Süre doldu, hata kayıtları korunuyor{Style.RESET_ALL}")
-        except Exception as e:
-            logger.error(f"Hata kayıtları yönetim hatası: {str(e)}")
-    
+
+        # Removed user interaction for clearing errors. This is handled by --reset-errors arg in main.py
+        # The main function should call db.reset_error_groups() if the arg is present.
+        logger.info("Hata veren gruplar listelendi. Temizlemek için --reset-errors argümanını kullanın.")
+
     def log_error(self, error_type: str, error_message: str, context: Dict[str, Any] = None):
         """
         Hataları loglar ve tekrarları filtreler.

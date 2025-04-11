@@ -135,8 +135,10 @@ async def main():
         db_path = os.environ.get('DB_PATH', 'runtime/database/users.db')
         user_db = UserDatabase(db_path)
         
-        # TelegramBot sınıfı
-        from bot.core import TelegramBot
+        # Service factory ve client düzenli hali
+        from bot.services.service_factory import ServiceFactory
+        client = TelegramClient('session/bot_session', int(os.getenv("API_ID", 0)), os.getenv("API_HASH", ""))
+        service_factory = ServiceFactory(client, config, user_db)
         
         # Ana bot nesnesi oluştur
         logger.info("Bot yapılandırma bilgileri yüklendi, servisler başlatılıyor...")
@@ -151,18 +153,6 @@ async def main():
 
         # Telegram client bağlantısı
         client = TelegramClient('mysession', api_id, api_hash)
-        
-        # Bot nesnesi oluştur - doğrudan çevre değişkenlerinden al
-        bot = TelegramBot(
-            api_id=int(os.getenv("API_ID", 0)), 
-            api_hash=os.getenv("API_HASH", ""),
-            phone=os.getenv("PHONE_NUMBER", ""),
-            admin_groups=config.ADMIN_GROUPS if hasattr(config, 'ADMIN_GROUPS') else os.getenv("ADMIN_GROUPS", "").split(','),
-            target_groups=config.TARGET_GROUPS if hasattr(config, 'TARGET_GROUPS') else os.getenv("TARGET_GROUPS", "").split(','),
-            group_links=config.GROUP_LINKS if hasattr(config, 'GROUP_LINKS') else os.getenv("GROUP_LINKS", "").split(','),
-            user_db=user_db,
-            config=config
-        )
         
         # Botu başlat
         logger.info("Bot başlatılıyor...")

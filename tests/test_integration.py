@@ -29,7 +29,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Proje modüllerini import et
-from bot.core import TelegramBot
+from main import TelegramBot  # Ana TelegramBot sınıfını direk main.py'den al
 from bot.handlers.group_handler import GroupHandler
 from bot.services.reply_service import ReplyService
 from bot.services.dm_service import DirectMessageService

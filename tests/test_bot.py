@@ -40,7 +40,7 @@ from unittest.mock import patch, MagicMock, AsyncMock, call
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Proje modüllerini import et
-from bot.core import TelegramBot
+from main import TelegramBot
 from database.user_db import UserDatabase
 from config.settings import Config
 

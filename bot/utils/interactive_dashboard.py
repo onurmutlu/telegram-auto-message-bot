@@ -54,7 +54,7 @@ class InteractiveDashboard:
                 ("Rate Limiter Ayarları", self.rate_limiter_settings),
                 ("Veritabanı Ayarları", self.database_settings),
                 ("Şablon Yöneticisi", self.template_manager),
-                ("Servis Durumu", self.service_status),
+                ("Servis Durumu", self.service_status),  # Bu satır güncellendi
                 ("Ana Menüye Dön", self.main_menu),
                 ("Çıkış", self.exit_dashboard),
             ],
@@ -267,7 +267,7 @@ class InteractiveDashboard:
         self.current_menu = "templates"
     
     # Servis durumu ekranı
-    def service_status(self):
+    async def service_status(self):
         """Servis durumlarını göster"""
         self.clear_screen()
         
@@ -367,7 +367,7 @@ class InteractiveDashboard:
             self.console.print("[yellow]Gruplar keşfediliyor...[/yellow]")
             if hasattr(self.services.get('group', {}), 'discover_groups'):
                 await self.services.get('group').discover_groups()
-            elif self.bot and hasattr(self.bot, 'discover_groups'):
+            elif hasattr(self.bot, 'discover_groups') and self.bot:
                 await self.bot.discover_groups()
             else:
                 self.console.print("[red]Grup keşif özelliği bulunamadı[/red]")
@@ -2174,7 +2174,7 @@ class InteractiveDashboard:
             
             # Her işlemden sonra kısa bekle
             Prompt.ask("\n[italic]Devam etmek için Enter tuşuna basın[/italic]")
-    
+
     def _edit_category_items(self, template_type, file_path, templates, category):
         """Bir kategorideki şablonları düzenler"""
         while True:
@@ -2302,3 +2302,29 @@ class InteractiveDashboard:
             
             # Her işlemden sonra kısa bekle
             Prompt.ask("\n[italic]Devam etmek için Enter tuşuna basın[/italic]")
+
+    # Interactive Dashboard'a servis kontrolü için özel metot ekleyin
+
+    async def check_services(self):
+        """Tüm servislerin durumunu kontrol eder"""
+        print("\n--- Servis Durumları ---\n")
+        
+        if not self.services:
+            print("❌ Hiç servis bulunamadı!")
+            return
+            
+        for name, service in self.services.items():
+            status = "✅ Çalışıyor" if getattr(service, "running", False) else "❌ Durdu"
+            print(f"{name}: {status}")
+            
+            # Servis detayları
+            if hasattr(service, "get_status"):
+                try:
+                    status_dict = service.get_status()
+                    for key, value in status_dict.items():
+                        if key != "running":  # running zaten yukarıda gösteriliyor
+                            print(f"  - {key}: {value}")
+                except Exception as e:
+                    print(f"  ⚠️ Detay alınamadı: {e}")
+                    
+        print("\nDaha fazla detay için console log'ları kontrol edin.\n")

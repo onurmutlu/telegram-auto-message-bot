@@ -1,155 +1,114 @@
+# -*- coding: utf-8 -*-
 """
 # ============================================================================ #
 # Dosya: logger_setup.py
 # Yol: /Users/siyahkare/code/telegram-bot/bot/utils/logger_setup.py
-# Açıklama: Telegram botu için özelleştirilmiş loglama (logging) yapılandırması.
-#
-# Bu modül, Telegram botunun loglama işlemlerini yapılandırır.
-# Temel Özellikler:
-# - Hem dosyaya hem de konsola log yazabilme.
-# - Farklı log seviyelerini (DEBUG, INFO, WARNING, ERROR, CRITICAL) destekleme.
-# - Renkli konsol çıktıları ile logları daha okunabilir hale getirme.
-# - Telethon kütüphanesi için özel log seviyesi ayarlayabilme.
-#
-# Geliştirme: 2025-04-01
-# Versiyon: v3.4.0
-# Lisans: MIT
-#
-# Telif Hakkı (c) 2025 SiyahKare Yazılım - Tüm Hakları Saklıdır.
+# İşlev: Uygulama için Logger yapılandırması.
 # ============================================================================ #
 """
-import logging
 import os
-import sys
-from pathlib import Path
-from colorama import Fore, Style, init
+import logging
+from datetime import datetime
+from pythonjsonlogger import jsonlogger # Ensure this dependency is in requirements.txt if used
 
-# Colorama başlat
-init(autoreset=True)
-
-def setup_logger(config, level=logging.INFO):
+def setup_logger(debug_mode=False):
     """
-    Logger'ı yapılandırır.
+    Logger yapılandırmasını yapar.
 
-    Bu fonksiyon, belirtilen yapılandırma ve log seviyesine göre bir logger nesnesi oluşturur ve yapılandırır.
-    Hem konsola renkli çıktı veren bir handler, hem de dosyaya log yazan bir handler ekler.
+    Hem konsol çıktısı hem de dosya günlüğü için yapılandırma yapar.
+    Debug modunda daha detaylı loglama yapılır, normal modda
+    daha özet bilgiler loglanır.
 
     Args:
-        config: Yapılandırma nesnesi. LOG_FILE_PATH özelliğini içermelidir.
-        level (logging.INFO): Logger seviyesi. Varsayılan olarak INFO seviyesindedir.
+        debug_mode (bool): Debug modunda çalıştırılacaksa True
 
     Returns:
-        logging.Logger: Yapılandırılmış logger nesnesi.
+        logging.Logger: Yapılandırılmış logger nesnesi
     """
-    # Logger yapılandırması
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)  # Ana logger seviyesi her zaman DEBUG
-    
-    # Eğer önceki handler'lar varsa temizle
-    for handler in logger.handlers[:]:
-        logger.removeHandler(handler)
-    
-    # Dosya handler'ı oluştur
+    # Log seviyesini belirle (debug veya info)
+    log_level = logging.DEBUG if debug_mode else logging.INFO
+
+    # Ana logger'ı yapılandır
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+
+    # Önceki handler'ları temizle
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # Konsol handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+
+    # Grup mesajlarını filtrele ve yalnızca önemli olanları logla
+    class GroupMessageFilter(logging.Filter):
+        def filter(self, record):
+            # Grup mesajlarını filtrele
+            message = str(record.getMessage())
+            if "Received group message in chat" in message:
+                return False
+
+            # Düşük öncelikli telethon mesajlarını filtrele
+            if record.name.startswith('telethon') and record.levelno < logging.WARNING:
+                return False
+
+            return True
+
+    console_handler.addFilter(GroupMessageFilter())
+
+    # Formatlayıcı
+    if debug_mode:
+        # Debug modunda daha detaylı format kullan
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    else:
+        # Normal modda daha basit format kullan
+        formatter = logging.Formatter('%(asctime)s - %(message)s')
+
+    console_handler.setFormatter(formatter)
+
+    # Handler'ı ekle
+    root_logger.addHandler(console_handler)
+
+    # Log dosyası klasörü oluştur
     try:
-        log_path = Path(config.LOG_FILE_PATH)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        file_handler = logging.FileHandler(log_path, encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)  # Dosya handler seviyesi DEBUG
-        
-        # Formatlayıcı - Doğru format alanlarını kullan
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
-                                     datefmt='%Y-%m-%d %H:%M:%S')
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-        
-        # Dosyaya başlangıç mesajı yaz
-        logger.info(f"Logger başarıyla yapılandırıldı: {config.LOG_FILE_PATH}")
-        
-        # Flush ile değişiklikleri dosyaya yaz
-        file_handler.flush()
-    except Exception as e:
-        print(f"Log dosyası yapılandırılırken hata: {e}")
-    
-    # Renkli konsol handler
-    console_handler = ColoredConsoleHandler()
-    console_handler.setLevel(level)  # Konsol handler kullanıcı tarafından belirlenen seviyede
-    
-    # Renkli konsol formatı
-    console_formatter = logging.Formatter('%(asctime)s - %(message)s', 
-                                        datefmt='%Y-%m-%d %H:%M:%S')
-    console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
-    
-    # Telethon loglama seviyesi
-    telethon_logger = logging.getLogger('telethon')
-    telethon_logger.setLevel(logging.WARNING)
-    
-    return logger
+        log_dir = "runtime/logs"
+        os.makedirs(log_dir, exist_ok=True)
 
-class ColoredConsoleHandler(logging.StreamHandler):
-    """
-    Renkli konsol çıktısı sağlayan özel bir log handler sınıfı.
+        # Tarih damgalı log dosyası adı
+        now = datetime.now()
+        log_file_name = now.strftime(f"{log_dir}/bot_%Y%m%d_%H%M%S.log")
 
-    Bu sınıf, farklı log seviyeleri için farklı renkler kullanarak konsol çıktısını daha okunabilir hale getirir.
-    """
-    
-    COLORS = {
-        logging.DEBUG: Fore.BLUE,
-        logging.INFO: Fore.GREEN,
-        logging.WARNING: Fore.YELLOW,
-        logging.ERROR: Fore.RED,
-        logging.CRITICAL: Fore.RED + Style.BRIGHT
-    }
-    
-    def emit(self, record):
-        """
-        Log kaydını işler ve konsola renkli olarak yazdırır.
+        # Dosya handler
+        file_handler = logging.FileHandler(log_file_name, encoding='utf-8') # Add encoding
+        file_handler.setLevel(log_level)
 
-        Args:
-            record (logging.LogRecord): Log kaydı nesnesi.
-        """
+        # Debug modunda JSON formatında log
+        if debug_mode:
+            # Ensure pythonjsonlogger is installed: pip install python-json-logger
+            try:
+                json_formatter = jsonlogger.JsonFormatter('%(asctime)s %(name)s %(levelname)s %(message)s')
+                file_handler.setFormatter(json_formatter)
+            except ImportError:
+                 print("Uyarı: python-json-logger kurulu değil. JSON loglama devre dışı.")
+                 file_handler.setFormatter(formatter) # Fallback to standard formatter
+        else:
+            file_handler.setFormatter(formatter)
+
+        root_logger.addHandler(file_handler)
+
+        # runtime/logs/latest.log sembolik link oluştur (Unix sistemlerde)
         try:
-            # Mesajı formatla
-            msg = self.format(record)
-            
-            # Uygun rengi seç
-            color = self.COLORS.get(record.levelno, Fore.WHITE)
-            
-            # Renkli çıktı
-            formatted_msg = f"{color}{msg}{Style.RESET_ALL}"
-            
-            # Emoji ekle (isteğe bağlı)
-            if record.levelno == logging.INFO:
-                formatted_msg = f"ℹ️  {formatted_msg}"
-            elif record.levelno == logging.WARNING:
-                formatted_msg = f"⚠️  {formatted_msg}"
-            elif record.levelno == logging.ERROR or record.levelno == logging.CRITICAL:
-                formatted_msg = f"❌ {formatted_msg}"
-            
-            # Mesajı yazdır
-            self.stream.write(formatted_msg + self.terminator)
-            self.flush()
-        except Exception:
-            self.handleError(record)
+            if os.name != 'nt':
+                latest_link = os.path.join(log_dir, "latest.log")
+                if os.path.lexists(latest_link): # Use lexists for symlinks
+                    os.remove(latest_link)
+                # Use relative path for symlink target for portability
+                os.symlink(os.path.basename(log_file_name), latest_link)
+        except Exception as e:
+            print(f"Sembolik link oluşturma hatası: {e}")
+    except Exception as e:
+        print(f"Log dosyası oluşturma hatası: {e}")
 
-def configure_service_logger(service_name, level=logging.INFO):
-    """
-    Belirli bir servis için özel bir logger yapılandırır.
-
-    Bu fonksiyon, verilen servis adı için bir logger oluşturur ve belirtilen seviyeye ayarlar.
-    Bu, farklı servislerin loglarını ayrı ayrı yönetmeyi sağlar.
-
-    Args:
-        service_name (str): Servis adı.
-        level (logging.INFO): Log seviyesi. Varsayılan olarak INFO seviyesindedir.
-
-    Returns:
-        logging.Logger: Servis için yapılandırılmış logger nesnesi.
-    """
-    logger = logging.getLogger(f"service.{service_name}")
-    logger.setLevel(level)
-    
-    # Handler yoksa ana logger'ın handler'larını kullanacak
-    
-    return logger
+    # Return the specific logger for the calling module, not the root logger directly
+    # This is generally better practice.
+    return logging.getLogger(__name__) # Or pass a specific name if needed

@@ -1,3 +1,551 @@
+import sqlite3
+import json
+from datetime import datetime, timedelta
+from colorama import Fore, Style
+from typing import List, Dict, Optional
+import os
+import logging
+# Logger configuration
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+class Database:
+    def __init__(self, db_path: str = 'data/users.db'):
+        """Veritabanı bağlantısını başlatır"""
+        self.db_path = db_path
+        self.conn = None
+        self.cursor = None
+        
+    async def init_db(self):
+        """Veritabanını başlatır ve gerekli tabloları oluşturur"""
+        try:
+            # Veritabanı dizinini oluştur
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+            
+            # Veritabanı bağlantısını aç
+            self.conn = sqlite3.connect(self.db_path)
+            self.cursor = self.conn.cursor()
+            
+            # Tabloları oluştur
+            self._create_tables()
+            
+            print(f"{Fore.GREEN}Veritabanı başarıyla başlatıldı{Style.RESET_ALL}")
+            
+        except Exception as e:
+            print(f"{Fore.RED}Veritabanı başlatma hatası: {str(e)}{Style.RESET_ALL}")
+            raise
+            
+    def _create_tables(self):
+        """Gerekli tabloları oluşturur"""
+        # Gruplar tablosu
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS groups (
+                group_id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                member_count INTEGER DEFAULT 0,
+                last_message DATETIME,
+                message_count INTEGER DEFAULT 0,
+                error_count INTEGER DEFAULT 0,
+                last_error DATETIME,
+                is_active BOOLEAN DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Kullanıcılar tablosu
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                group_id INTEGER,
+                is_blocked BOOLEAN DEFAULT 0,
+                last_message DATETIME,
+                message_count INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (group_id) REFERENCES groups(group_id)
+            )
+        ''')
+        
+        # Mesajlar tablosu
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS messages (
+                message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER,
+                user_id INTEGER,
+                content TEXT,
+                sent_at DATETIME,
+                status TEXT,
+                error_message TEXT,
+                FOREIGN KEY (group_id) REFERENCES groups(group_id),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        ''')
+        
+        # İndeksler
+        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_groups_active ON groups(is_active)')
+        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_groups_last_message ON groups(last_message)')
+        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_group ON users(group_id)')
+        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_blocked ON users(is_blocked)')
+        
+        self.conn.commit()
+        
+    async def get_target_groups(self):
+        """Tüm hedef grupları getirir"""
+        self.cursor.execute('''
+            SELECT * FROM groups
+        ''')
+        groups = self.cursor.fetchall()
+        return [{
+            'group_id': row[0],
+            'name': row[1],
+            'join_date': row[2],
+            'last_message': row[3],
+            'message_count': row[4],
+            'member_count': row[5],
+            'error_count': row[6],
+            'last_error': row[7],
+            'is_active': bool(row[8]),
+            'retry_after': row[9]
+        } for row in groups]
+        
+    async def add_target_group(self, group_id: int, name: str, member_count: int = 0):
+        """Hedef grubu veritabanına ekler veya günceller"""
+        try:
+            # İlk olarak grubun var olup olmadığını kontrol et
+            self.cursor.execute('SELECT 1 FROM groups WHERE group_id = ?', (group_id,))
+            exists = self.cursor.fetchone()
+            
+            if exists:
+                # Mevcut grup kaydını güncelle
+                self.cursor.execute('''
+                    UPDATE groups
+                    SET name = ?, member_count = ?, updated_at = ?
+                    WHERE group_id = ?
+                ''', (name, member_count, datetime.now(), group_id))
+                logger.debug(f"Grup güncellendi: {name} (ID: {group_id})")
+            else:
+                # Yeni grup ekle
+                self.cursor.execute('''
+                    INSERT INTO groups (group_id, name, member_count, join_date, is_active, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 1, ?, ?)
+                ''', (group_id, name, member_count, datetime.now(), datetime.now(), datetime.now()))
+                logger.info(f"Yeni grup eklendi: {name} (ID: {group_id})")
+            
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Grup eklenirken hata: {str(e)}")
+            return False
+        
+    async def update_group_stats(self, group_id: int, last_message: datetime = None, message_count: int = 1):
+        """Grup istatistiklerini günceller"""
+        self.cursor.execute('''
+            UPDATE groups 
+            SET last_message = ?, 
+                message_count = message_count + ?,
+                updated_at = ?
+            WHERE group_id = ?
+        ''', (last_message or datetime.now(), message_count, datetime.now(), group_id))
+        self.conn.commit()
+        
+    async def mark_group_inactive(self, group_id: int, error_message: str = None, retry_time=None, permanent: bool = False):
+        """
+        Grubu devre dışı bırakır
+        
+        Args:
+            group_id: Grup ID
+            error_message: Hata mesajı
+            retry_time: Yeniden deneme zamanı (default: şu andan 24 saat sonrası)
+            permanent: Kalıcı olarak devre dışı bırak (admin hatası vb. için)
+        """
+        try:
+            # Varsayılan retry_time şimdiden 24 saat sonrası
+            if retry_time is None and not permanent:
+                retry_time = datetime.now() + timedelta(hours=24)
+            
+            # Kalıcı olarak devre dışı bırakılacaksa retry_time NULL olmalı
+            retry_time_str = retry_time.strftime('%Y-%m-%d %H:%M:%S') if retry_time and not permanent else None
+            
+            # Şu an için retry_time belirlenmemişse (permanent=True durumu)
+            permanent_flag = 1 if permanent else 0
+            
+            self.cursor.execute('''
+                UPDATE groups 
+                SET is_active = 0,
+                    error_count = error_count + 1,
+                    last_error = ?,
+                    retry_after = ?,
+                    permanent_error = ?,
+                    updated_at = ?
+                WHERE group_id = ?
+            ''', (error_message or "Bilinmeyen hata", retry_time_str, permanent_flag, datetime.now(), group_id))
+            self.conn.commit()
+            
+            if permanent:
+                logger.warning(f"Grup {group_id} kalıcı olarak devre dışı bırakıldı: {error_message}")
+            else:
+                logger.info(f"Grup {group_id} şu tarihe kadar devre dışı bırakıldı: {retry_time}")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Grup devre dışı bırakılırken hata: {str(e)}")
+            return False
+        
+    async def reactivate_group(self, group_id):
+        """Grubu tekrar aktif eder"""
+        self.cursor.execute('''
+            UPDATE groups 
+            SET is_active = 1,
+                retry_after = NULL,
+                updated_at = ?
+            WHERE group_id = ?
+        ''', (datetime.now(), group_id))
+        self.conn.commit()
+        
+    async def get_group_stats(self, group_id: int) -> Optional[Dict]:
+        """Grup istatistiklerini getirir"""
+        self.cursor.execute('SELECT * FROM groups WHERE group_id = ?', (group_id,))
+        row = self.cursor.fetchone()
+        if row:
+            return {
+                'group_id': row[0],
+                'name': row[1],
+                'member_count': row[2],
+                'last_message': row[3],
+                'message_count': row[4],
+                'error_count': row[5],
+                'last_error': row[6],
+                'is_active': row[7],
+                'created_at': row[8],
+                'updated_at': row[9]
+            }
+        return None
+        
+    async def remove_target_group(self, group_id: int):
+        """Hedef grubu veri tabanından tamamen kaldırır"""
+        try:
+            self.cursor.execute('''
+                DELETE FROM groups WHERE group_id = ?
+            ''', (group_id,))
+            self.conn.commit()
+            logger.info(f"Grup {group_id} veritabanından kaldırıldı")
+            return True
+        except Exception as e:
+            logger.error(f"Grup kaldırılırken hata: {str(e)}")
+            return False
+
+    async def get_active_groups(self):
+        """
+        Aktif grupları ve süresi dolan devre dışı grupları getirir
+        """
+        try:
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            self.cursor.execute('''
+                SELECT * FROM groups 
+                WHERE is_active = 1 
+                   OR (retry_after IS NOT NULL AND retry_after <= ? AND permanent_error = 0)
+            ''', (current_time,))
+            
+            groups = self.cursor.fetchall()
+            result = []
+            
+            for group in groups:
+                # Sütun isimleri bağlama göre değişebilir, doğru indeksleri kullanın
+                group_dict = {
+                    'group_id': group[0],
+                    'name': group[1],
+                    'join_date': group[2],
+                    'last_message': group[3],
+                    'message_count': group[4],
+                    'member_count': group[5],
+                    'error_count': group[6],
+                    'last_error': group[7],
+                    'is_active': bool(group[8]),
+                    'retry_after': group[9],
+                    'permanent_error': bool(group[10]) if len(group) > 10 else False
+                }
+                result.append(group_dict)
+                
+                # Eğer retry_after süresi geçmiş ve devre dışı bir grupsa aktifleştir
+                if not group_dict['is_active'] and group_dict['retry_after'] and datetime.strptime(group_dict['retry_after'], '%Y-%m-%d %H:%M:%S') <= datetime.now():
+                    await self.reactivate_group(group_dict['group_id'])
+            
+            return result
+        except Exception as e:
+            logger.error(f"Aktif grupları getirirken hata: {str(e)}")
+            return []
+
+    async def add_discovered_group(self, group_id: int, name: str, member_count: int = 0, 
+                              is_active: bool = True, is_target: bool = True):
+        """
+        Keşfedilen grubu veritabanına ekler veya günceller
+        
+        Args:
+            group_id: Grup ID
+            name: Grup adı
+            member_count: Grup üye sayısı
+            is_active: Grup aktif mi?
+            is_target: Hedef grup mu? (üye toplamak veya mesaj göndermek için)
+        """
+        try:
+            # İlk olarak grubun var olup olmadığını kontrol et
+            self.cursor.execute('SELECT 1 FROM groups WHERE group_id = ?', (group_id,))
+            exists = self.cursor.fetchone()
+            
+            if exists:
+                # Mevcut grup kaydını güncelle
+                self.cursor.execute('''
+                    UPDATE groups
+                    SET name = ?, member_count = ?, is_active = ?, is_target = ?, updated_at = ?
+                    WHERE group_id = ?
+                ''', (name, member_count, int(is_active), int(is_target), datetime.now(), group_id))
+            else:
+                # Yeni grup ekle
+                self.cursor.execute('''
+                    INSERT INTO groups 
+                    (group_id, name, join_date, member_count, is_active, is_target, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    group_id, name, datetime.now(), member_count, 
+                    int(is_active), int(is_target), datetime.now(), datetime.now()
+                ))
+            
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Grup eklenirken hata: {str(e)}")
+            return False
+
+    async def get_all_target_groups(self):
+        """
+        Veritabanından tüm hedef grupları getirir
+        """
+        try:
+            # Düzeltildi: "title" yerine "name" kullanılıyor
+            self.cursor.execute('''
+                SELECT group_id, name, member_count
+                FROM groups 
+                WHERE is_target = 1
+            ''')
+            
+            result = []
+            for row in self.cursor.fetchall():
+                result.append({
+                    'group_id': row[0],
+                    'name': row[1],  # Anahtar adı bununla uyumlu olmalı
+                    'member_count': row[2]
+                })
+                
+            return result
+        except Exception as e:
+            logger.error(f"Hedef gruplar alınırken hata: {str(e)}")
+            return []
+
+    def close(self):
+        """Veritabanı bağlantısını kapatır"""
+        if self.conn:
+            self.conn.close()
+
+    def create_tables(self):
+        """Gerekli tabloları oluşturur"""
+        try:
+            # Users tablosu - Kalıcı kullanıcı kaydı için
+            self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                source_group TEXT,
+                join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_invited TIMESTAMP,
+                invite_count INTEGER DEFAULT 0,
+                is_bot INTEGER DEFAULT 0,
+                is_replied INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            # Üye-grup ilişki tablosu
+            self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                group_id INTEGER,
+                join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, group_id)
+            )
+            ''')
+            
+            # Davet geçmişi tablosu
+            self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS invite_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status TEXT,
+                response TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+            ''')
+            
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Tablo oluşturma hatası: {str(e)}")
+            return False
+            
+    def add_or_update_user(self, user_data):
+        """
+        Kullanıcıyı veritabanına ekler veya günceller
+        
+        Args:
+            user_data: dict - Kullanıcı verisi
+                {user_id, username, first_name, last_name, source_group, is_bot}
+        """
+        try:
+            # Kullanıcının mevcut olup olmadığını kontrol et
+            user_id = user_data['user_id']
+            self.cursor.execute('SELECT 1 FROM users WHERE user_id = ?', (user_id,))
+            exists = self.cursor.fetchone()
+            
+            now = datetime.now()
+            
+            if exists:
+                # Mevcut kullanıcıyı güncelle, ama bazı alanları korumak için önce verileri al
+                self.cursor.execute('SELECT invite_count, last_invited, status FROM users WHERE user_id = ?', (user_id,))
+                db_data = self.cursor.fetchone()
+                
+                # SQL sorgusu hazırla, sadece temel bilgileri güncelle
+                self.cursor.execute('''
+                    UPDATE users
+                    SET username = COALESCE(?, username),
+                        first_name = COALESCE(?, first_name),
+                        last_name = COALESCE(?, last_name),
+                        source_group = COALESCE(?, source_group),
+                        is_bot = ?,
+                        updated_at = ?
+                    WHERE user_id = ?
+                ''', (
+                    user_data.get('username'),
+                    user_data.get('first_name'),
+                    user_data.get('last_name'),
+                    user_data.get('source_group'),
+                    int(user_data.get('is_bot', 0)),
+                    now,
+                    user_id
+                ))
+                
+                # Kullanıcı-grup ilişkisini ekle (varsa)
+                if 'group_id' in user_data:
+                    self._add_user_group_relation(user_id, user_data['group_id'])
+                    
+            else:
+                # Yeni kullanıcı ekle
+                self.cursor.execute('''
+                    INSERT INTO users
+                    (user_id, username, first_name, last_name, source_group, is_bot, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    user_id,
+                    user_data.get('username'),
+                    user_data.get('first_name'),
+                    user_data.get('last_name'),
+                    user_data.get('source_group'),
+                    int(user_data.get('is_bot', 0)),
+                    now,
+                    now
+                ))
+                
+                # Kullanıcı-grup ilişkisini ekle (varsa)
+                if 'group_id' in user_data:
+                    self._add_user_group_relation(user_id, user_data['group_id'])
+            
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Kullanıcı ekleme/güncelleme hatası: {str(e)}")
+            return False
+
+    def _add_user_group_relation(self, user_id, group_id):
+        """
+        Kullanıcının grup ilişkisini ekler
+        """
+        try:
+            now = datetime.now()
+            self.cursor.execute('''
+                INSERT OR IGNORE INTO user_groups
+                (user_id, group_id, join_date)
+                VALUES (?, ?, ?)
+            ''', (user_id, group_id, now))
+            return True
+        except Exception as e:
+            logger.error(f"Kullanıcı-grup ilişkisi ekleme hatası: {str(e)}")
+            return False
+            
+    def mark_user_invited(self, user_id):
+        """
+        Kullanıcının davet edildiğini işaretler
+        """
+        try:
+            now = datetime.now()
+            self.cursor.execute('''
+                UPDATE users
+                SET last_invited = ?,
+                    invite_count = invite_count + 1,
+                    updated_at = ?
+                WHERE user_id = ?
+            ''', (now, now, user_id))
+            
+            # Ayrıca davet geçmişine ekle
+            self.cursor.execute('''
+                INSERT INTO invite_history
+                (user_id, sent_at, status)
+                VALUES (?, ?, ?)
+            ''', (user_id, now, 'sent'))
+            
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Kullanıcının davet durumu güncellenemedi: {str(e)}")
+            return False
+            
+    def get_users_for_invite(self, limit=50, cooldown_hours=24):
+        """Davet edilecek kullanıcıları getirir"""
+        try:
+            now = datetime.now()
+            cooldown = now - timedelta(hours=cooldown_hours)
+            
+            # 'id' yerine 'user_id' sütununu kullan
+            self.cursor.execute('''
+                SELECT user_id, username, first_name, last_name
+                FROM users 
+                WHERE (last_invited IS NULL OR last_invited < ?) 
+                  AND is_bot = 0
+                  AND status = 'active'
+                ORDER BY RANDOM()
+                LIMIT ?
+            ''', (cooldown, limit))
+            
+            users = []
+            for row in self.cursor.fetchall():
+                users.append({
+                    'user_id': row[0],
+                    'username': row[1],
+                    'first_name': row[2],
+                    'last_name': row[3]
+                })
+                
+            return users
+        except Exception as e:
+            logger.error(f"get_users_for_invite error: {str(e)}")
+            return []
+
 def upgrade_database():
     """
     Veritabanı şemasını en son versiyona yükseltir.

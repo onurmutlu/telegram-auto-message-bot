@@ -1,8 +1,13 @@
-# Temel paketler
+# =============================================================================
+# Telegram Auto Message Bot - Gerekli Paketler (v3.5.0)
+# =============================================================================
+
+# Temel bağımlılıklar
 telethon==1.32.1
 python-dotenv==1.0.1
 colorama==0.4.6
 tabulate==0.9.0
+requests>=2.31.0
 
 # Telegram API
 python-telegram-bot==20.7
@@ -15,6 +20,22 @@ SQLAlchemy==2.0.27
 psycopg2-binary==2.9.9
 aiosqlite==0.19.0  # Asenkron SQLite işlemleri için
 
+# Loglama ve izleme
+rich>=10.0.0
+loguru==0.7.2  # Daha iyi loglama deneyimi için
+python-json-logger>=2.0.7  # JSON formatında loglama için
+
+# Görüntü işleme
+Pillow==10.2.0
+
+# Veri işleme ve doğrulama
+pandas==2.2.0  # Veri analizi için (opsiyonel)
+pydantic==2.5.3  # Veri doğrulama için
+
+# Performans ve güvenlik
+ujson==5.9.0  # Hızlı JSON işleme 
+cryptography==42.0.1  # Güvenlik işlemleri için
+
 # Test paketleri
 pytest==8.0.1
 pytest-asyncio==0.23.5
@@ -22,20 +43,9 @@ pytest-cov==4.1.0
 pytest-timeout==2.2.0  # Test timeout yönetimi için
 pytest-mock==3.12.0  # Mocking işlemleri için
 
-# Loglama ve zengin çıktı
-rich==13.7.0
-loguru==0.7.2  # Daha iyi loglama deneyimi için
-
-# Görüntü işleme
-Pillow==10.2.0
-
-# Veri işleme
-pandas==2.2.0  # Veri analizi için (opsiyonel)
-pydantic==2.5.3  # Veri doğrulama için
-
-# Performans ve güvenlik
-ujson==5.9.0  # Hızlı JSON işleme 
-cryptography==42.0.1  # Güvenlik işlemleri için
+# Command-Line arayüzleri
+typer>=0.9.0  # Command line argümanları için
+questionary>=2.0.1  # Interaktif sorular için
 
 # NOT: Aşağıdaki modüller Python ile birlikte gelir, ayrıca yüklemeye gerek yoktur
 # - typing (standart kütüphane)
@@ -44,7 +54,4 @@ cryptography==42.0.1  # Güvenlik işlemleri için
 # - json (standart kütüphane)
 # - datetime (standart kütüphane)
 # - os (standart kütüphane)
-# - sys (standart kütüphane)colorama
-requests
-colorama
-requests
+# - sys (standart kütüphane)
