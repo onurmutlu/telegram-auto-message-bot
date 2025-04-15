@@ -8,9 +8,11 @@ python-dotenv==1.0.1
 colorama==0.4.6
 tabulate==0.9.0
 requests>=2.31.0
+aioconsole==0.7.0
 
 # Telegram API
 python-telegram-bot==20.7
+tdlib==0.5.0  # TDLib Python wrapper
 
 # Asenkron işlemler
 asyncio==3.4.3
@@ -29,12 +31,26 @@ python-json-logger>=2.0.7  # JSON formatında loglama için
 Pillow==10.2.0
 
 # Veri işleme ve doğrulama
-pandas==2.2.0  # Veri analizi için (opsiyonel)
+pandas==2.2.0  # Veri analizi için
 pydantic==2.5.3  # Veri doğrulama için
 
 # Performans ve güvenlik
 ujson==5.9.0  # Hızlı JSON işleme 
 cryptography==42.0.1  # Güvenlik işlemleri için
+
+# Yapay Zeka ve Analiz
+openai==1.6.1  # GPT entegrasyonu için
+scikit-learn==1.4.0  # Makine öğrenmesi algoritmaları için
+nltk==3.8.1  # Doğal dil işleme için
+scipy==1.12.0  # Bilimsel hesaplamalar için
+
+# Çoklu ortam ve containerization desteği
+docker==7.0.0  # Docker API erişimi için
+PyYAML==6.0.1  # YAML yapılandırma dosyaları için
+
+# Web Arayüzü (Opsiyonel)
+fastapi==0.109.2  # Web API için
+uvicorn==0.27.1  # ASGI sunucusu
 
 # Test paketleri
 pytest==8.0.1

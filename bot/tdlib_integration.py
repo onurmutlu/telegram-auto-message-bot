@@ -7,24 +7,36 @@
 # © 2025 SiyahKare Yazılım - Tüm Hakları Saklıdır
 # ============================================================================ #
 """
-import json
-import asyncio
+import os
 import logging
+import asyncio
+import platform
+import ctypes
+import uuid
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional, Set, Union
 
-import pytdlib as td
-from pytdlib.client import TdClient
+# TDLib wrapper'ını doğru şekilde import et
+try:
+    from tdlib import Client as TdClient
+    TDLIB_AVAILABLE = True
+except ImportError:
+    TDLIB_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("TDLib Python wrapper bulunamadı. Grup keşif özellikleri devre dışı.")
+
 from rich.console import Console
 from rich.progress import Progress, TextColumn, BarColumn, SpinnerColumn
 
 from database.user_db import UserDatabase
+from bot.services.base_service import BaseService  # BaseService sınıfını import et
 
 logger = logging.getLogger(__name__)
 console = Console()
 
-class TelegramDiscoveryService:
+class TelegramDiscoveryService(BaseService):  # BaseService'den türetildiğini varsayıyorum
     """
     TDLib kullanarak Telegram grupları keşfetme ve izleme servisi.
     
@@ -35,39 +47,36 @@ class TelegramDiscoveryService:
     4. İsteğe bağlı olarak bu gruplara otomatik katılır
     """
     
-    def __init__(self, db: UserDatabase, config: Any, stop_event: asyncio.Event = None):
-        """
-        TelegramDiscoveryService başlatıcısı
+    def __init__(self, db, config, stop_event=None):
+        super().__init__("discovery", None, config, db, stop_event)
         
-        Args:
-            db: Veritabanı bağlantısı
-            config: Yapılandırma ayarları
-            stop_event: Durdurma sinyali
-        """
-        self.db = db
-        self.config = config
-        self.stop_event = stop_event or asyncio.Event()
-        self.running = False
-        self.tdlib_client = None
+        # db None olabileceği için kontrol ekleyin
+        self.db = db  # Referansı sakla, hata kontrolü için gerekebilir
         
-        # İstatistikler
-        self.discovered_groups = 0
-        self.joined_groups = 0
-        self.blacklisted_groups = 0
+        # TDLib entegrasyonu mevcut mu kontrol et
+        if not TDLIB_AVAILABLE:
+            logger.warning("TDLib entegrasyonu bulunamadı, servis sınırlı çalışacak")
+            self.have_tdlib = False
+        else:
+            self.have_tdlib = True
+            
+        # debug_tdlib_setup() metodu için diğer parametreler olmadan da çalışabilmeli
+        # Bu nedenle baseService parametrelerini daha güvenli hale getirin
         
-        # Grup izleme
-        self.known_groups: Set[int] = set()
-        self.group_capabilities: Dict[int, Dict[str, Any]] = {}
+        # Asenkron işlemler için gerekli yapılar
+        self.requests = {}  # Request ID -> Future eşlemesi
+        self.update_handlers = []  # TDLib güncelleme işleyicileri
+        self.is_closed = False
         
         # Yapılandırma
         self._load_settings()
     
     def _load_settings(self) -> None:
         """TDLib ayarlarını yükler."""
-        # TDLib yapılandırması
-        self.api_id = self.config.telegram.api_id
-        self.api_hash = self.config.telegram.api_hash
-        self.phone = getattr(self.config.telegram, 'phone', '')
+        # TDLib yapılandırması - önce config nesnesinden, yoksa çevre değişkenlerinden
+        self.api_id = getattr(self.config.telegram, 'api_id', int(os.environ.get('API_ID', 0)))
+        self.api_hash = getattr(self.config.telegram, 'api_hash', os.environ.get('API_HASH', ''))
+        self.phone = getattr(self.config.telegram, 'phone', os.environ.get('PHONE', ''))
         
         # Grup keşif ayarları
         self.auto_join = getattr(self.config, 'auto_join_groups', False)
@@ -76,6 +85,104 @@ class TelegramDiscoveryService:
         self.group_keywords = getattr(self.config, 'group_keywords', 
                                      ['chat', 'sohbet', 'muhabbet', 'arkadaş',
                                       'friend', 'talk', 'omegle', 'aşk', 'ask', 'arayış', 'arayis'])
+    
+    def _find_tdjson_path(self) -> Optional[str]:
+        """
+        Sistem platformuna göre TDLib JSON kütüphanesini bul
+        
+        Returns:
+            str: Bulunan kütüphane yolu veya None
+        """
+        system = platform.system().lower()
+        
+        # Varsayılan yol listesi
+        paths = []
+        
+        if system == 'darwin':  # macOS
+            paths = [
+                '/usr/local/lib/libtdjson.dylib',
+                '/opt/homebrew/lib/libtdjson.dylib',
+                '/usr/lib/libtdjson.dylib',
+                'libtdjson.dylib'
+            ]
+        elif system == 'linux':
+            paths = [
+                '/usr/local/lib/libtdjson.so',
+                '/usr/lib/libtdjson.so',
+                'libtdjson.so'
+            ]
+        elif system == 'windows':
+            paths = [
+                'C:\\Program Files\\TDLib\\bin\\tdjson.dll',
+                'C:\\TDLib\\bin\\tdjson.dll',
+                'tdjson.dll'
+            ]
+            
+        # Çevresel değişken kontrol et
+        if 'TDJSON_PATH' in os.environ:
+            paths.insert(0, os.environ['TDJSON_PATH'])
+            
+        # Yolları dene
+        for path in paths:
+            try:
+                # Dinamik olarak kütüphaneyi yüklemeyi dene
+                ctypes.CDLL(path)
+                logger.info(f"TDLib JSON kütüphanesi bulundu: {path}")
+                return path
+            except OSError:
+                # Bu yolda kütüphane bulunamadı, bir sonrakini dene
+                continue
+                
+        return None
+    
+    def debug_tdlib_setup(self):
+        """TDLib kurulumunu test et ve sonuçları logla"""
+        print("\n===== TDLIB KURULUM TESTİ =====")
+        
+        # Sistem bilgileri
+        import platform
+        print(f"İşletim Sistemi: {platform.system()} {platform.release()}")
+        
+        # Çevre değişkeni kontrolü
+        tdlib_path_env = os.environ.get('TDJSON_PATH', 'Tanımlanmamış')
+        print(f"TDJSON_PATH çevre değişkeni: {tdlib_path_env}")
+        
+        # Olası yolları kontrol et
+        paths_to_check = [
+            '/usr/local/lib/libtdjson.dylib',
+            '/opt/homebrew/lib/libtdjson.dylib',
+            '/usr/lib/libtdjson.dylib',
+            tdlib_path_env
+        ]
+        
+        print("\nKütüphane yollarını kontrol ediyorum:")
+        for path in paths_to_check:
+            exists = os.path.exists(path)
+            status = "✅ MEVCUT" if exists else "❌ BULUNAMADI"
+            print(f"  {path}: {status}")
+        
+        # Seçilen yolu göster
+        selected_path = self._find_tdjson_path()
+        print(f"\nSeçilen kütüphane yolu: {selected_path}")
+        
+        # Kütüphaneyi yüklemeyi dene
+        if selected_path:
+            try:
+                import ctypes
+                lib = ctypes.CDLL(selected_path)
+                version_func = getattr(lib, 'td_get_version', None)
+                if version_func:
+                    version = version_func()
+                    print(f"TDLib sürümü: {version}")
+                print("✅ Kütüphane başarıyla yüklendi!")
+                return True
+            except Exception as e:
+                print(f"❌ Kütüphane yüklenirken hata: {str(e)}")
+        else:
+            print("❌ Uygun kütüphane yolu bulunamadı!")
+        
+        print("==================================")
+        return False
     
     async def initialize(self) -> bool:
         """
@@ -181,38 +288,62 @@ class TelegramDiscoveryService:
             logger.error(f"Grup keşfi sırasında hata oluştu: {str(e)}", exc_info=True)
     
     async def _discover_from_primary_sources(self) -> None:
-        """Ana kaynaklardan (herkese açık gruplar) grupları keşfeder."""
+        """Ana kaynaklardan (herkese açık gruplar) grupları keşfeder"""
         try:
             # Herkese açık grupları al
-            public_chats = await self.tdlib_client.get_chats(limit=1000)
+            logger.info("Ana kaynaklardan gruplar keşfediliyor...")
             
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[bold blue]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                console=console
-            ) as progress:
-                task = progress.add_task("[cyan]Ana grupları işleniyor...", total=len(public_chats))
+            try:
+                # Popüler anahtar kelimelerle herkese açık grupları ara
+                public_chats = []
+                search_keywords = self.group_keywords or ["sohbet", "chat", "group", "arayış"]
                 
-                for chat_id in public_chats:
-                    progress.update(task, advance=1)
+                for keyword in search_keywords:
+                    logger.info(f"'{keyword}' anahtar kelimesi ile grup aranıyor...")
                     
-                    # Bilinen grupları atla
-                    if chat_id in self.known_groups:
-                        continue
+                    try:
+                        # TDLib arama metodunu kullan
+                        search_result = await self.tdlib_client.search_public_chats(keyword)
+                        public_chats.extend(search_result)
+                        logger.info(f"'{keyword}' arama sonucu: {len(search_result)} grup bulundu")
+                        
+                        # Çok fazla istek göndermeyi önlemek için bekleme
+                        await asyncio.sleep(2.0)
+                    except Exception as keyword_err:
+                        logger.error(f"Anahtar kelime araması hatası ({keyword}): {str(keyword_err)}")
+                
+                # Tekrarlanan grupları temizle
+                unique_chats = list(set(public_chats))
+                logger.info(f"Toplam {len(unique_chats)} benzersiz grup bulundu")
+            except Exception as e:
+                logger.error(f"Herkese açık grupları alma hatası: {str(e)}")
+                public_chats = []
                     
-                    # Grup bilgilerini al
+            # Her grubu işle
+            for chat_id in public_chats:
+                try:
+                    # Grup detaylarını al
                     chat = await self.tdlib_client.get_chat(chat_id)
                     
-                    # Grup kontrolü yap
-                    if await self._is_valid_group(chat_id, chat):
-                        await self._process_discovered_group(chat_id, chat)
-                        self.discovered_groups += 1
+                    # Grup geçerli mi kontrol et
+                    is_valid = await self._is_valid_group(chat_id, chat)
                     
-                    # Rate limiting - Telegram API sınırlamalarına takılmamak için
-                    await asyncio.sleep(0.5)
-        
+                    if is_valid:
+                        # Grup yeteneklerini analiz et
+                        await self._analyze_group_capabilities(chat_id, chat)
+                        
+                        # Keşfedilen grubu işle
+                        await self._process_discovered_group(chat_id, chat)
+                        
+                    # İşlem limitini aşmamak için her 3 grupta bir bekleme
+                    await asyncio.sleep(1.0)
+                except Exception as chat_err:
+                    logger.error(f"Grup işleme hatası (ID: {chat_id}): {str(chat_err)}")
+                    
+            logger.info(f"Ana kaynaklardan keşif tamamlandı: {self.discovered_groups} grup keşfedildi")
+                
+            # Bilinen grupları yükle
+            await self._load_existing_groups()
         except Exception as e:
             logger.error(f"Ana kaynaklardan keşif sırasında hata: {str(e)}")
     
@@ -302,38 +433,61 @@ class TelegramDiscoveryService:
     
     async def _is_valid_group(self, chat_id: int, chat: Dict[str, Any]) -> bool:
         """
-        Grubun geçerli bir hedef olup olmadığını kontrol eder.
+        Grubun geçerli bir hedef olup olmadığını kontrol eder
         
         Args:
-            chat_id: Grup ID'si
+            chat_id: Grup ID
             chat: Grup bilgileri
             
         Returns:
-            bool: Grup geçerli ise True
+            bool: Geçerli ise True
         """
         try:
-            # Temel tip kontrolü
-            if chat.get('type', {}).get('@type') not in ['supergroup', 'basicGroup', 'channel']:
+            # Temel kontroller
+            if not chat or not isinstance(chat, dict):
                 return False
-            
-            # Karaliste kontrolü
-            if chat_id in self.group_blacklist:
+                
+            # Kara listede olup olmadığını kontrol et
+            if chat_id in self.blacklisted_groups:
+                logger.debug(f"Grup kara listede: {chat_id}")
+                self.blacklisted_groups += 1
                 return False
+                
+            # Grup türünü kontrol et
+            chat_type = chat.get('type', {})
+            type_name = chat_type.get('@type', '')
             
-            # Minimum üye sayısı kontrolü
+            if type_name not in ('basicGroup', 'supergroup'):
+                logger.debug(f"Geçersiz grup türü: {type_name}")
+                return False
+                
+            # Grup boyutunu kontrol et
             member_count = chat.get('member_count', 0)
             if member_count < self.min_group_size:
+                logger.debug(f"Grup çok küçük: {member_count} üye (min: {self.min_group_size})")
                 return False
+                
+            # Katılma izinlerini kontrol et
+            if chat.get('joined', False):
+                logger.debug(f"Gruba zaten katılmışız: {chat_id}")
+                return True
+                
+            # Anahtar kelimeleri kontrol et (opsiyonel)
+            title = chat.get('title', '').lower()
+            description = chat.get('description', '').lower()
             
-            # Başarılı kontrollerden sonra, grubun yeteneklerini analiz et
-            await self._analyze_group_capabilities(chat_id, chat)
+            has_keyword = False
+            for keyword in self.group_keywords:
+                if keyword.lower() in title or keyword.lower() in description:
+                    has_keyword = True
+                    break
+                    
+            return has_keyword
             
-            return True
-        
         except Exception as e:
-            logger.debug(f"Grup geçerlilik kontrolü hatası: {str(e)}")
+            logger.error(f"Grup geçerlilik kontrolü hatası: {str(e)}")
             return False
-    
+
     async def _analyze_group_capabilities(self, chat_id: int, chat: Dict[str, Any]) -> None:
         """
         Grubun yeteneklerini analiz eder (mesaj gönderimi, üyelik, vb.).
@@ -397,44 +551,52 @@ class TelegramDiscoveryService:
     
     async def _process_discovered_group(self, chat_id: int, chat: Dict[str, Any]) -> None:
         """
-        Keşfedilen bir grubu işler.
+        Keşfedilen grubu işler
         
         Args:
-            chat_id: Grup ID'si
+            chat_id: Grup ID
             chat: Grup bilgileri
         """
         try:
-            # Grubun yeteneklerine bak
+            # Önce yetenek analizi yap
+            if chat_id not in self.group_capabilities:
+                await self._analyze_group_capabilities(chat_id, chat)
+            
             capabilities = self.group_capabilities.get(chat_id, {})
             
-            # Grup verisini hazırla
+            # Grup verilerini hazırla
             group_data = {
                 'group_id': chat_id,
-                'title': chat.get('title', f'Group {chat_id}'),
+                'title': chat.get('title', f"Group {chat_id}"),
                 'username': chat.get('username', ''),
-                'member_count': chat.get('member_count', 0),
                 'description': chat.get('description', ''),
-                'is_public': bool(chat.get('username')),
+                'member_count': chat.get('member_count', 0),
+                'is_public': 'username' in chat and bool(chat['username']),
                 'can_send_messages': capabilities.get('can_send_messages', False),
-                'can_invite_users': capabilities.get('can_invite_users', False),
-                'can_join': capabilities.get('can_join', False),
-                'is_member': chat.get('is_member', False),
-                'discovery_date': datetime.now()
+                'is_member': chat.get('joined', False)
             }
             
-            # Veritabanına kaydet
+            # Veritabanına ekle/güncelle
             if hasattr(self.db, 'add_discovered_group'):
-                await self.db.add_discovered_group(group_data)
-            
-            # Gruba otomatik katıl
-            if self.auto_join and capabilities.get('can_join', False) and not chat.get('is_member', False):
-                await self._join_group(chat_id, chat)
-            
-            # Bilinen gruplara ekle
+                result = await self._run_async_db_method(
+                    self.db.add_discovered_group, 
+                    group_data
+                )
+                
+                if result == "added":
+                    # İstatistikleri güncelle
+                    self.discovered_groups += 1
+                    logger.info(f"Yeni grup keşfedildi: {group_data['title']} (ID: {chat_id})")
+                    
+                    # Gruba katılma (opsiyonel)
+                    if self.auto_join and capabilities.get('can_invite_users', False):
+                        await self._try_join_group(chat_id, group_data)
+                
+            # Bilinen grupları güncelle
             self.known_groups.add(chat_id)
-            
+                
         except Exception as e:
-            logger.error(f"Grup işleme hatası: {str(e)}")
+            logger.error(f"Keşfedilen grubu işleme hatası: {str(e)}")
     
     async def _join_group(self, chat_id: int, chat: Dict[str, Any]) -> bool:
         """
@@ -467,6 +629,47 @@ class TelegramDiscoveryService:
         except Exception as e:
             logger.error(f"Gruba katılma hatası: {str(e)}")
             return False
+    
+    async def _receive_loop(self):
+        """TDLib'den sürekli yanıt alma döngüsü"""
+        while not self.is_closed:
+            try:
+                # TDLib'den güncelleme al
+                event = self.client.receive(timeout=1.0)
+                
+                if event:
+                    # Event'i işle
+                    await self._process_event(event)
+                    
+                # Her döngü arasında kısa bekleme
+                await asyncio.sleep(0.001)  # Event loop tıkanmasını önler
+            except asyncio.CancelledError:
+                logger.info("TDLib alma döngüsü iptal edildi")
+                break
+            except Exception as e:
+                logger.error(f"TDLib alma döngüsü hatası: {str(e)}")
+                await asyncio.sleep(1.0)  # Hata durumunda biraz bekle
+
+    async def _process_event(self, event):
+        """
+        TDLib olayını işle
+        
+        Args:
+            event: TDLib olayı
+        """
+        if '@extra' in event and event['@extra'] in self.requests:
+            future = self.requests.pop(event['@extra'])
+            if not future.done():
+                future.set_result(event)
+        elif event.get('@type') == 'updateAuthorizationState':
+            await self._process_auth_state(event['authorization_state'])
+        else:
+            # Diğer güncellemeler
+            for handler in self.update_handlers:
+                try:
+                    await handler(event)
+                except Exception as e:
+                    logger.error(f"TDLib olay işleyici hatası: {str(e)}")
     
     def get_statistics(self) -> Dict[str, Any]:
         """

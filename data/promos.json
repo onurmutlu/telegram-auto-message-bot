@@ -1,0 +1,48 @@
+{
+  "templates": {
+    "general": [
+      "Merhaba! Size özel grup linklerimizle sohbete katılabilirsiniz: t.me/{}",
+      "Kaliteli bir sohbet arayanlara özel grubumuz açıldı! 👉 t.me/{} 🔥",
+      "Telegram'da en iyi sohbet deneyimi için 👉 t.me/{} katıl!",
+      "Grubumuzdaki enerjik konuşmalara katılmak ister misin? t.me/{}"
+    ],
+    "new": [
+      "Hoş geldin! Telegram yolculuğuna bizim gruplarımızla başlayabilirsin: t.me/{}",
+      "Telegram'a yeni mi katıldın? En iyi deneyim için grubumuz seni bekliyor: t.me/{}",
+      "Yeni üyemiz, keyifli sohbetler için grubumuza davetlisin: t.me/{} ✨"
+    ],
+    "active": [
+      "Aktif kullanıcımız olarak seni premium grubumuza davet etmek istiyoruz: t.me/{}",
+      "Telegram'da sohbeti sevdiğini görüyoruz! Özel VIP grubumuza katılmak ister misin? t.me/{}",
+      "En aktif kullanıcılarımıza özel bir grubumuz var: t.me/{} 💎"
+    ],
+    "inactive": [
+      "Uzun zamandır görüşemiyoruz! Yeni aktif grubumuz seni bekliyor: t.me/{}",
+      "Seni özledik! Sohbete dönmek için yeni grubumuza katıl: t.me/{}",
+      "Tekrar aramızda görmek isteriz! Özel grup linkimiz: t.me/{} 🌟"
+    ],
+    "vip": [
+      "Çok özel kullanıcımız! Premium grup deneyimi için: t.me/{}",
+      "VIP davet: Sadece seçkin üyeler için oluşturulan grubumuza katılın: t.me/{}",
+      "En değerli kullanıcılarımız için özel VIP grubu açıldı! Link: t.me/{} 💫"
+    ]
+  },
+  "campaign_templates": {
+    "new_feature": [
+      "🚀 DUYURU: Yeni özelliğimiz aktifleşti! İlk deneyenler arasında ol: t.me/{}",
+      "🆕 YENİLİK: Telegram botumuzun son güncellemesi çıktı! Detaylar için: t.me/{}"
+    ],
+    "special_offer": [
+      "🔥 FIRSAT: Sınırlı süre için özel teklifimizden yararlanın! t.me/{}",
+      "💯 ÖZEL TEKLİF: Bu hafta sadece davet edilen kullanıcılara premium erişim! t.me/{}"
+    ],
+    "event": [
+      "📅 ETKİNLİK: Bu hafta sonu online buluşmamıza davetlisin! Detaylar: t.me/{}",
+      "🎉 CANLI YAYIN: Yarın 20:00'de özel yayınımız olacak. Katılmak için: t.me/{}"
+    ],
+    "seasonal": [
+      "🌞 YAZ KAMPANYASI: Tatil sezonuna özel grup açıldı! t.me/{}",
+      "❄️ KIŞ İNDİRİMİ: Yılbaşına özel avantajlardan yararlanmak için: t.me/{}"
+    ]
+  }
+}

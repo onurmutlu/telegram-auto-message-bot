@@ -4,63 +4,54 @@
 
 Bu belge, Telegram Auto Message Bot'un tüm önemli değişikliklerini içerir.
 
-## [3.5.0] - 2025-04-05
+## [3.5.1] - 2025-04-15 (PLANLANAN)
 
 ### Eklenen Özellikler
-- **Gelişmiş Veritabanı Şeması**: Veritabanı yapısı, kullanıcı-grup ilişkileri ve davet geçmişi takibi için geliştirildi.
-- **User-Groups İlişkisi**: Kullanıcıların bulunduğu grupları takip eden ilişkisel tablo yapısı.
-- **Davet Geçmişi**: Kullanıcılara gönderilen tüm davetlerin ayrıntılı kaydı tutulabilecek.
-- **Otomatik Grup Keşfi**: TARGET_GROUPS artık veritabanından dinamik olarak alınıyor.
-- **InviteService**: Yeni geliştirilen davet servisi ile kullanıcılara periyodik davet gönderimi.
-- **AdaptiveRateLimiter**: Akıllı hız sınırlama özelliği ile FloodWait hatalarından kaçınma.
-- **Veritabanı Bütünlük Kontrolü**: Şema güncellemesinde bütünlük doğrulaması özelliği eklendi.
+- **Çoklu Hesap Desteği**: Tek kurulumda 3 hesaba kadar destek
+- **Docker Container Entegrasyonu**: Kolay dağıtım için Docker yapılandırması
+- **Müşteri İzolasyonu**: Her müşteri için ayrı veritabanı şeması ve yapılandırma
+- **Basit Yönetici Paneli**: Temel ayarları doğrudan Telegram üzerinden yapılandırma botu
+- **Hızlı Kurulum Scripti**: Yeni müşterileri 5 dakikada aktif edecek otomatik kurulum
+- **Lisans Yönetimi**: Müşteri lisanslarını otomatik yöneten sistem
 
 ### İyileştirmeler
-- **Veritabanı Performans Optimizasyonu**: İndeksler ve foreign key kısıtlamaları eklendi.
-- **Şema Versiyon Takibi**: Veritabanı şema değişiklikleri artık ayrıntılı olarak takip ediliyor.
-- **Logging Sistemi**: Daha kapsamlı ve tutarlı loglama yapısı oluşturuldu.
-- **DirectMessageService Refactor**: Kod kalitesi ve hata yönetimi geliştirildi.
-- **Grup Servisi Yeniden Yapılandırma**: GroupService kodu modülerleştirildi ve iyileştirildi.
-- **Dinamik Mesaj Şablonları**: Şablonlar JSON dosyalarından dinamik olarak yüklenebiliyor.
-- **Kod Belgelendirmesi**: Tüm kod tabanı için kapsamlı docstring ve açıklamalar eklendi.
-- **Hata Yakalama ve İşleme**: Bot çökme durumlarına karşı daha dayanıklı hata yakalama.
+- **Daha Az Log Çıktısı**: Konsol logları optimize edildi, sadece kritik bilgiler gösteriliyor
+- **Performans Optimizasyonu**: Docker container'ları için bellek ve CPU kullanımı iyileştirildi
+- **Veritabanı Bağlantı Havuzu**: PostgreSQL için bağlantı pooling mekanizması
+- **Docker Compose Desteği**: Tüm müşterileri tek seferde yönetmek için yapılandırma
+- **Dağıtım Otomasyonu**: CI/CD pipeline ile otomatik dağıtım çözümü
+
+## [3.5.0] - 2025-04-12
+
+### Eklenen Özellikler
+- **PromoService**: Gelişmiş tanıtım servisi ile hedefli kampanyalar
+- **AnnouncementService**: Gruplarda duyuru ve kampanya yönetimi
+- **Kullanıcı Profil Analizi**: Demografik veri analizi ve segmentasyon
+- **Servis Mimarisi v2**: Daha modüler ve test edilebilir servis yapısı
+- **ServiceManager Geliştirmeleri**: Servis yeniden başlatma ve duraklatma özellikleri
+
+### İyileştirmeler
+- **Gelişmiş Veritabanı Şeması**: Kullanıcı-grup ilişkileri ve davet geçmişi takibi
+- **Otomatik Grup Keşfi**: TARGET_GROUPS artık veritabanından dinamik olarak alınıyor
+- **AdaptiveRateLimiter**: Akıllı hız sınırlama özelliği ile FloodWait hatalarından kaçınma
+- **Veritabanı Bütünlük Kontrolü**: Şema güncellemesinde bütünlük doğrulaması
+- **Kod Belgelendirmesi**: Tüm kod tabanı için kapsamlı docstring ve açıklamalar eklendi
 
 ### Düzeltmeler
-- **DirectMessageService Hataları**: '_load_templates' metodu eksikliği düzeltildi.
-- **Rate Limiter Sorunları**: Çift tanımlanan RateLimiter kullanımı düzeltildi.
-- **Veritabanı Sütun Hatası**: 'no such column: name' hatası düzeltildi.
-- **DM ve Invite Servislerindeki Çakışmalar**: Servisler arasındaki çakışmalar önlendi.
-- **SQLite Bağlantı Kaçakları**: Veritabanı bağlantısının her koşulda kapatılması sağlandı.
-- **Tarih İşleme Hataları**: Datetime işlemlerindeki sorunlar giderildi.
-- **Safe Group Name Handling**: Grup adlarının güvenli şekilde işlenmesi sağlandı.
-
-### Yeniden Yapılandırma
-- **update_schema.py Güncellendi**: Daha kapsamlı ve güvenilir veritabanı şema güncelleme araçları.
-- **ServiceFactory Düzenlemesi**: Daha temiz bir servis oluşturma yapısı sağlandı.
-- **Automated Database Migrations**: Otomatik veritabanı yapılandırması için güncellendi.
-- **Utility Functions Refactoring**: Yardımcı fonksiyonlar daha modüler yapıda düzenlendi.
+- **DirectMessageService Hataları**: '_load_templates' metodu eksikliği düzeltildi
+- **Rate Limiter Sorunları**: Çift tanımlanan RateLimiter kullanımı düzeltildi
+- **Veritabanı Sütun Hatası**: 'no such column: name' hatası düzeltildi
+- **DM ve Invite Servislerindeki Çakışmalar**: Servisler arasındaki çakışmalar önlendi
+- **SQLite Bağlantı Kaçakları**: Veritabanı bağlantısının her koşulda kapatılması sağlandı
 
 ## [3.4.2] - 2025-04-05
 
 ### Eklenen Özellikler
-- **Interaktif Dashboard**: Bot ayarlarını terminal üzerinden düzenleme arayüzü tamamlandı.
-- **Docker Çoklu Hesap Desteği**: Her müşteri için ayrı Docker container'ları ile çoklu hesap desteği sağlandı.
-- **ServiceFactory Geliştirmesi**: Müşteri ID'sine göre dinamik servis oluşturma desteği eklendi.
-- **Yapılandırma Yönetimi**: Her müşteri için ayrı yapılandırma dosyaları desteği (JSON/YAML).
-- **Hızlı Kurulum Kılavuzu**: Docker Compose ile hızlı kurulum için dokümantasyon eklendi.
-
-### İyileştirmeler
-- **Grup Mesaj Gönderimi**: Grup mesaj gönderim algoritması yeniden düzenlendi ancak bazı gruplarda hala sorunlar mevcut.
-- **Şablon Yönetimi**: Mesaj şablonlarının interaktif dashboard üzerinden düzenlenmesi sağlandı.
-- **Veritabanı İzolasyonu**: PostgreSQL üzerinde müşteri bazlı şema desteği eklendi.
-- **Loglama Sistemi**: Her müşteri için ayrı log dosyaları oluşturuldu.
-- **Oturum Yönetimi**: Her müşteri için ayrı oturum dosyası desteği sağlandı.
-
-### Düzeltmeler
-- **Asenkron İşlem Hataları**: Interaktif dashboard'daki asenkron işlem hataları giderildi.
-- **Config Hataları**: Müşteri ID'sine bağlı yapılandırma dosyası eksikliği sorunları çözüldü.
-- **Grup Keşfi**: Grupların otomatik keşfi sırasında oluşan hatalar düzeltildi.
-- **FloodWaitError**: Telegram hız sınırı hatalarına karşı bekleme mekanizması geliştirildi.
+- **Interaktif Dashboard**: Bot ayarlarını terminal üzerinden düzenleme arayüzü
+- **Docker Çoklu Hesap Desteği**: Her müşteri için ayrı Docker container'ları ile çoklu hesap desteği
+- **ServiceFactory Geliştirmesi**: Müşteri ID'sine göre dinamik servis oluşturma desteği
+- **Yapılandırma Yönetimi**: Her müşteri için ayrı yapılandırma dosyaları desteği (JSON/YAML)
+- **Hızlı Kurulum Kılavuzu**: Docker Compose ile hızlı kurulum için dokümantasyon
 
 ## [3.4.1] - 2025-04-02
 

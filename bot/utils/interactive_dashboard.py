@@ -1,22 +1,30 @@
 """
-İnteraktif terminal dashboard modülü.
-Bot ayarlarını görüntüleme ve düzenleme için zengin bir kullanıcı arayüzü sağlar.
+# ============================================================================ #
+# Dosya: interactive_dashboard.py
+# Yol: /Users/siyahkare/code/telegram-bot/bot/utils/interactive_dashboard.py
+# İşlev: Telegram bot için interaktif kumanda paneli.
+#
+# © 2025 SiyahKare Yazılım - Tüm Hakları Saklıdır
+# ============================================================================ #
 """
+
 import os
+import sys
 import time
 import json
-import shutil
-import traceback
+import logging
 import asyncio
-from datetime import datetime
-from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple, Union, Set
+from datetime import datetime, timedelta
+import shutil
+import threading
+import traceback
+
+import rich
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
-from rich.prompt import Prompt, Confirm, IntPrompt
-from rich.layout import Layout
-from rich import box
-from typing import Dict, Any, List, Callable
+from rich.panel import Panel
+from rich.progress import Progress, TaskID
 
 class InteractiveDashboard:
     """
@@ -2320,7 +2328,12 @@ class InteractiveDashboard:
             # Servis detayları
             if hasattr(service, "get_status"):
                 try:
-                    status_dict = service.get_status()
+                    # Async fonksiyon olup olmadığını kontrol et
+                    if asyncio.iscoroutinefunction(service.get_status):
+                        status_dict = await service.get_status()
+                    else:
+                        status_dict = service.get_status()
+                        
                     for key, value in status_dict.items():
                         if key != "running":  # running zaten yukarıda gösteriliyor
                             print(f"  - {key}: {value}")

@@ -18,36 +18,35 @@
 # Build: 2025-04-07-22:00:00
 # Versiyon: v3.5.0
 # ============================================================================ #
-#
-# Değişiklik Geçmişi:
-# v3.5.0 (2025-04-07) - was_recently_invited için timestamp kontrolü düzeltildi
-#                      - Güçlendirilmiş hata yönetimi ve loglama eklendi
-#                      - AdaptiveRateLimiter efektif kullanımı optimize edildi
-#                      - _process_user() sınıf içine entegre edildi
-# v3.4.2 (2025-03-25) - Çift mesaj gönderimini önleyici kontroller eklendi
-# v3.4.0 (2025-03-10) - Otomatik grup keşfi iyileştirildi
-# v3.3.0 (2025-02-15) - Gelişmiş hız sınırlama mekanizması eklendi
-#
-# Geliştirici Notları:
-#   - Rate limiter'ı daha agresif ayarlayarak günlük mesaj sınırlamasına dikkat edin
-#   - Grup keşfi ve mesaj gönderimi için ideal saat aralığı: 10:00-22:00
-#   - .env dosyasında DM_FOOTER_MESSAGE ve DM_RESPONSE_TEMPLATE değişkenleri yapılandırılabilir
-#
-# © 2025 SiyahKare Yazılım - Tüm Hakları Saklıdır
-# ============================================================================ #
 """
-import os
-import sys
+import asyncio
 import json
 import logging
+import os
+import platform
+import ctypes
 import random
-import asyncio
-from colorama import Fore, Style, init
+import re
+import time
+import traceback
+import uuid
 from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional, Set, Tuple, TYPE_CHECKING, Union
 from pathlib import Path
+from typing import Dict, List, Any, Optional, Set, Tuple, Union, TYPE_CHECKING
 
-from telethon import errors
+from colorama import Fore, Style, init
+init(autoreset=True)
+
+# TDLib wrapper'ını doğru şekilde import et
+try:
+    from tdlib import Client as TdClient
+    TDLIB_AVAILABLE = True
+except ImportError:
+    TDLIB_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("TDLib Python wrapper bulunamadı. DM servisi TDLib özellikleri devre dışı.")
+
+from telethon import errors, events
 from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.tl.functions.channels import JoinChannelRequest
 
@@ -62,20 +61,18 @@ if TYPE_CHECKING:
     from database.user_db import UserDatabase
     from asyncio import Event
 
-# Colorama başlatma
-init(autoreset=True)
-
 # Logger yapılandırması
 logger = logging.getLogger(__name__)
 
-
 class DirectMessageService(BaseService):
     """
-    Telegram bot için direkt mesaj yönetim servisi.
+    Özel mesajlaşma ve davet işlemlerini yöneten servis.
     
-    Başlıca işlevleri:
-    - Gelen özel mesajları işleme ve yanıtlama
-    - Kullanıcılara otomatik davet mesajları gönderme
+    Bu servis, kullanıcılara özel mesaj gönderme, davet yönetimi ve grup keşfi 
+    işlevlerini sağlar.
+    
+    Temel özellikleri:
+    - Özel mesaj gönderimi ve yanıtlama
     - Grupları keşfederek kullanıcı havuzu oluşturma
     - İnteraktif botlarla Telegram gruplarını yönetme
     
@@ -94,20 +91,7 @@ class DirectMessageService(BaseService):
     """
 
     def __init__(self, client, config, db, stop_event=None):
-        """
-        DirectMessageService sınıfını başlatır.
-        
-        Args:
-            client: Telegram istemcisi
-            config: Bot yapılandırma nesnesi
-            db: Veritabanı nesnesi
-            stop_event (optional): Servis durdurma sinyali
-        """
-        # Temel bileşenler
-        self.client = client
-        self.config = config
-        self.db = db
-        self.stop_event = stop_event if stop_event else asyncio.Event()
+        super().__init__("dm", client, config, db, stop_event)
         
         # Durum takibi
         self.running = True
@@ -117,6 +101,38 @@ class DirectMessageService(BaseService):
         
         # Kullanıcı yanıt takibi - bu oturum için
         self.responded_users: Set[int] = set()
+        
+        # TDLib özelliklerini başlat
+        self.use_tdlib = False
+        self.td_client = None
+        self.tdlib = None
+        
+        # TDLib'yi başlat
+        if self._init_tdlib():
+            logger.info("TDLib entegrasyonu etkinleştirildi")
+        else:
+            logger.warning("TDLib entegrasyonu olmadan başlatılıyor...")
+
+        # TDLib entegrasyonu mevcut mu kontrol et
+        if not TDLIB_AVAILABLE:
+            logger.warning("TDLib entegrasyonu bulunamadı, DM servisi TDLib özellikleri olmadan çalışacak")
+            self.have_tdlib = False
+        else:
+            self.have_tdlib = True
+            # TDLib için gerekli parametreleri hazırla
+            self.api_id = getattr(self.config.telegram, 'api_id', int(os.environ.get('API_ID', 0)))
+            self.api_hash = getattr(self.config.telegram, 'api_hash', os.environ.get('API_HASH', ''))
+            self.phone = getattr(self.config.telegram, 'phone', os.environ.get('PHONE', ''))
+            
+            # TDLib client referansı
+            self.tdlib_client = None
+            
+            # TDLib asenkron API için yapılar
+            self.requests = {}  # Request ID -> Future eşlemesi
+        
+        # Kullanıcı profil yöneticisi
+        from bot.utils.user_profiler import UserProfiler
+        self.user_profiler = UserProfiler(db, config)
         
         # Ayarları yükleme
         self._load_settings()
@@ -130,8 +146,370 @@ class DirectMessageService(BaseService):
         # Error Groups takibi
         self.error_groups = set()
         
+        # Servis referansları
+        self.services = {}
+
+        # Entity önbelleği
+        self.entity_cache = {}  # user_id -> entity
+        
         logger.info("DM servisi başlatıldı")
     
+    def _find_tdjson_path(self) -> Optional[str]:
+        """
+        Sistem platformuna göre TDLib JSON kütüphanesini bul
+        
+        Returns:
+            str: Bulunan kütüphane yolu veya None
+        """
+        system = platform.system().lower()
+        
+        # Varsayılan yol listesi
+        paths = []
+        
+        if system == 'darwin':  # macOS
+            paths = [
+                '/usr/local/lib/libtdjson.dylib',
+                '/opt/homebrew/lib/libtdjson.dylib',
+                '/usr/lib/libtdjson.dylib',
+                'libtdjson.dylib'
+            ]
+        elif system == 'linux':
+            paths = [
+                '/usr/local/lib/libtdjson.so',
+                '/usr/lib/libtdjson.so',
+                'libtdjson.so'
+            ]
+        elif system == 'windows':
+            paths = [
+                'C:\\Program Files\\TDLib\\bin\\tdjson.dll',
+                'C:\\TDLib\\bin\\tdjson.dll',
+                'tdjson.dll'
+            ]
+            
+        # Çevresel değişken kontrol et
+        if 'TDJSON_PATH' in os.environ:
+            paths.insert(0, os.environ['TDJSON_PATH'])
+            
+        # Yolları dene
+        for path in paths:
+            try:
+                # Dinamik olarak kütüphaneyi yüklemeyi dene
+                ctypes.CDLL(path)
+                logger.info(f"TDLib JSON kütüphanesi bulundu: {path}")
+                return path
+            except OSError:
+                # Bu yolda kütüphane bulunamadı, bir sonrakini dene
+                continue
+                
+        return None
+
+    def _init_tdlib(self):
+        """TDLib başlatma ve bağlantı işlemleri"""
+        try:
+            import ctypes
+            import json
+            import uuid
+            import time
+            
+            # TDLib kütüphanesini bul ve yükle
+            lib_path = self._find_tdjson_path()
+            if not lib_path:
+                logger.error("TDLib kütüphanesi bulunamadı, TDLib özellikleri devre dışı")
+                self.use_tdlib = False
+                return False
+                
+            # Kütüphaneyi yükle
+            try:
+                self.tdlib = ctypes.CDLL(lib_path)
+                logger.info(f"TDLib kütüphanesi başarıyla yüklendi: {lib_path}")
+            except Exception as e:
+                logger.error(f"TDLib kütüphanesi yüklenemedi: {str(e)}")
+                self.use_tdlib = False
+                return False
+                
+            # TDLib fonksiyonlarını tanımla
+            self.tdlib.td_json_client_create.restype = ctypes.c_void_p
+            self.tdlib.td_json_client_send.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+            self.tdlib.td_json_client_receive.argtypes = [ctypes.c_void_p, ctypes.c_double]
+            self.tdlib.td_json_client_receive.restype = ctypes.c_char_p
+            self.tdlib.td_json_client_execute.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+            self.tdlib.td_json_client_execute.restype = ctypes.c_char_p
+            self.tdlib.td_json_client_destroy.argtypes = [ctypes.c_void_p]
+            
+            # TDLib istemcisi oluştur
+            self.td_client = self.tdlib.td_json_client_create()
+            
+            # TDLib için işlemci fonksiyonları ekle - HATA KORUMASINI GÜÇLENDİR
+            self.tdlib_send = lambda query: self.tdlib.td_json_client_send(
+                self.td_client, 
+                json.dumps(query).encode('utf-8')
+            )
+            
+            # None kontrolü ekleyerek hata düzeltildi
+            self.tdlib_receive = lambda timeout: (
+                json.loads(
+                    result.decode('utf-8')
+                ) if (result := self.tdlib.td_json_client_receive(self.td_client, timeout)) is not None else None
+            )
+            
+            self.tdlib_execute = lambda query: json.loads(
+                self.tdlib.td_json_client_execute(self.td_client, json.dumps(query).encode('utf-8')).decode('utf-8')
+            )
+            
+            # TDLib kimlik bilgileri
+            self.tdlib_client_id = str(uuid.uuid4())
+            
+            # TDLib başlatma
+            self._tdlib_setup_authentication()
+            
+            # TDLib hazır
+            self.use_tdlib = True
+            logger.info("TDLib başarıyla başlatıldı ve hazır")
+            return True
+            
+        except Exception as e:
+            logger.error(f"TDLib başlatma hatası: {str(e)}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            self.use_tdlib = False
+            return False
+
+    def _tdlib_setup_authentication(self):
+        """TDLib kimlik doğrulama ayarlarını yapar"""
+        # Temel parametre ayarları
+        self.tdlib_send({
+            '@type': 'setTdlibParameters',
+            'parameters': {
+                'use_test_dc': False,
+                'database_directory': './tdlib-db',
+                'use_message_database': True,
+                'use_secret_chats': True,
+                'api_id': self.config.telegram.api_id,
+                'api_hash': self.config.telegram.api_hash,
+                'system_language_code': 'tr',
+                'device_model': 'Python TDLib',
+                'application_version': '1.0',
+                'enable_storage_optimizer': True
+            }
+        })
+        
+        # Telefon numarası veya bot token ile kimlik doğrulama
+        if hasattr(self.config.telegram, 'phone'):
+            self.tdlib_send({
+                '@type': 'setAuthenticationPhoneNumber',
+                'phone_number': self.config.telegram.phone
+            })
+        elif hasattr(self.config.telegram, 'bot_token'):
+            self.tdlib_send({
+                '@type': 'checkAuthenticationBotToken',
+                'token': self.config.telegram.bot_token
+            })
+        
+        # Yanıtları işle
+        start_time = time.time()
+        timeout = 10.0  # 10 saniye timeout
+        
+        while time.time() - start_time < timeout:
+            try:
+                result = self.tdlib_receive(0.1)
+                # Sonuç None ise, döngüyü atla
+                if not result:
+                    continue
+                    
+                if result.get('@type') == 'updateAuthorizationState':
+                    auth_state = result.get('authorization_state', {}).get('@type')
+                    
+                    if auth_state == 'authorizationStateReady':
+                        logger.info("TDLib başarıyla yetkilendirildi")
+                        return True
+                        
+                    elif auth_state == 'authorizationStateWaitPhoneNumber':
+                        if not hasattr(self.config.telegram, 'phone'):
+                            logger.error("TDLib için telefon numarası gerekli")
+                            return False
+                            
+                        self.tdlib_send({
+                            '@type': 'setAuthenticationPhoneNumber',
+                            'phone_number': self.config.telegram.phone
+                        })
+                        
+                    elif auth_state == 'authorizationStateWaitCode':
+                        logger.error("Doğrulama kodu gerekli - otomatik doğrulama yapılamıyor")
+                        return False
+                        
+            except Exception as e:
+                logger.error(f"TDLib yanıt işlenirken hata: {str(e)}")
+                continue
+                    
+        logger.warning("TDLib yetkilendirme zaman aşımına uğradı, sınırlı işlevsellik kullanılacak")
+        return False
+
+    async def initialize(self) -> bool:
+        """Servisi başlatmadan önce hazırlar."""
+        # Önce BaseService'in initialize metodunu çağır
+        await super().initialize()
+        
+        try:
+            # Bot'un kendi ID'sini alma - BU ÖNEMLİ
+            me = await self.client.get_me()
+            self.my_id = me.id
+            logger.info(f"Bot ID alındı: {self.my_id}")
+        except Exception as e:
+            logger.error(f"Bot ID alınamadı: {str(e)}")
+            self.my_id = None  # En azından None olarak ayarla
+        
+        # Diğer başlatma işlemleri...
+        
+        return True
+        # initialize metodunun sonuna ekleyin
+        await self.test_templates()
+    async def _login_async(self):
+        """TDLib istemcisinde asenkron oturum açma"""
+        # TDLib gibi senkron bir API'yi asyncio ile kullanmak için
+        # executor kullanarak bloke olmayan çağrılar yapıyoruz
+        loop = asyncio.get_running_loop()
+        
+        # Asenkron login
+        return await loop.run_in_executor(None, lambda: self.tdlib_client.login())
+    
+    async def _call_tdlib_method(self, method_name, params=None):
+        """TDLib metodunu asenkron çağırır"""
+        if not params:
+            params = {}
+            
+        # Unique request id ekle
+        request_id = str(uuid.uuid4())
+        params['@extra'] = request_id
+        
+        # Future oluştur ve kaydet
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self.requests[request_id] = future
+        
+        # Metodu çağır (blocking çağrıyı executor'da çalıştır)
+        await loop.run_in_executor(
+            None,
+            lambda: self.tdlib_client.send(method_name, params)
+        )
+        
+        # Yanıtı bekle
+        return await future
+
+    async def search_public_chats(self, query):
+        """Herkese açık grupları arar"""
+        if not hasattr(self, 'have_tdlib') or not self.have_tdlib:
+            return []
+            
+        try:
+            result = await self._call_tdlib_method('searchPublicChats', {'query': query})
+            if result and isinstance(result, dict) and result.get('@type') == 'chats':
+                return result.get('chat_ids', [])
+            return []
+        except Exception as e:
+            logger.error(f"Herkese açık grup arama hatası: {str(e)}")
+            return []
+
+    async def start(self) -> bool:
+        """Servisi başlatır."""
+        # Zaten çalışıyorsa tekrar başlatma
+        if self.running:
+            return True
+        
+        self.running = True
+        logger.info(f"{self.name} servisi başlatılıyor...")
+        
+        # Önceki event handler'ları temizle
+        try:
+            self.client.remove_event_handler(self.on_new_message) 
+            self.client.remove_event_handler(self.handle_private_message)
+        except Exception:
+            pass  # İlk başlatmada handler olmayabilir, hata görmezden gelinebilir
+        
+        # DÜZELTME: Sadece özel mesajlar için olan handler'ı ekle
+        # Bu handler direkt olarak mesajları işler
+        self.client.add_event_handler(
+            self.handle_private_message,
+            events.NewMessage(incoming=True, func=lambda e: e.is_private)
+        )
+        
+        logger.info(f"{self.name} servisi başlatıldı.")
+        return True
+
+    async def stop(self) -> None:
+        """
+        Servisi güvenli bir şekilde durdurur.
+        
+        Returns:
+            None
+        """
+        if not self.running:
+            return
+            
+        self.running = False
+        logger.info(f"{self.name} servisi durdurma sinyali gönderildi")
+        
+        # Event handler'ları kaldır
+        try:
+            self.client.remove_event_handler(self.on_new_message)
+        except Exception as e:
+            logger.error(f"Event handler kaldırma hatası: {str(e)}")
+        
+        # TDLib istemcisini kapat
+        if hasattr(self, 'tdlib_client') and self.tdlib_client:
+            try:
+                if hasattr(self, 'receive_task') and self.receive_task:
+                    self.receive_task.cancel()
+                    
+                await asyncio.sleep(0.5)  # Kısa bir bekletme
+                
+                # TDLib istemcisini asenkron olarak kapat
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, lambda: self.tdlib_client.stop())
+                self.tdlib_client = None
+            except Exception as e:
+                logger.error(f"TDLib kapatma hatası: {str(e)}")
+                
+        await super().stop()
+    
+    async def _receive_loop(self):
+        """TDLib'den sürekli yanıt alma döngüsü"""
+        if not hasattr(self, 'have_tdlib') or not self.have_tdlib or not self.tdlib_client:
+            logger.warning("TDLib istemcisi mevcut değil, alma döngüsü çalıştırılmadı")
+            return
+            
+        while self.running and not self.stop_event.is_set():
+            try:
+                # TDLib'den güncelleme al
+                event = await asyncio.get_event_loop().run_in_executor(
+                    None, 
+                    lambda: self.tdlib_client.receive(timeout=1.0)
+                )
+                
+                if event:
+                    await self._process_tdlib_event(event)
+                    
+                # Her döngü arasında kısa bekleme
+                await asyncio.sleep(0.001)  # Event loop tıkanmasını önler
+            except asyncio.CancelledError:
+                logger.info("TDLib alma döngüsü iptal edildi")
+                break
+            except Exception as e:
+                logger.error(f"TDLib alma döngüsü hatası: {str(e)}")
+                await asyncio.sleep(1.0)  # Hata durumunda biraz bekle
+    
+    async def _process_tdlib_event(self, event):
+        """TDLib olayını işle"""
+        if not event or not isinstance(event, dict):
+            return
+            
+        # Extra ID ile kaydedilmiş future varsa tamamla
+        if '@extra' in event and event['@extra'] in self.requests:
+            future = self.requests.pop(event['@extra'])
+            if not future.done():
+                future.set_result(event)
+        elif event.get('@type') == 'error':
+            logger.error(f"TDLib hatası: {event.get('message', 'Bilinmeyen hata')}")
+
     def _load_settings(self):
         """Çevre değişkenlerinden ve yapılandırmadan ayarları yükler."""
         # Mesajlaşma ayarları
@@ -151,179 +529,38 @@ class DirectMessageService(BaseService):
         self.dm_cooldown_minutes = int(dm_cooldown.split('#')[0].strip())
         
         # Super users
-        self.super_users: List[str] = [s.strip() for s in os.getenv("SUPER_USERS", "").split(',') 
-                                      if s and s.strip()]
+        self.super_users = [s.strip() for s in os.getenv("SUPER_USERS", "").split(',') 
+                            if s and s.strip()]
         
         # Grup linkleri
-        self.group_links: List[str] = self._parse_group_links()
+        self.group_links = self._parse_group_links()
         logger.info(f"Loaded {len(self.group_links)} group links.")
         
         # Debug modu
         self.debug = os.getenv("DEBUG", "false").lower() == "true"
-
-    def _setup_rate_limiter(self):
-        """Hız sınırlayıcıyı yapılandırır."""
-        # Ana rate limiter
-        self.rate_limiter = AdaptiveRateLimiter(
-            initial_rate=self.config.get_setting('dm_rate_limit_initial_rate', 3),  # Başlangıçta daha düşük
-            period=self.config.get_setting('dm_rate_limit_period', 60),
-            error_backoff=self.config.get_setting('dm_rate_limit_error_backoff', 1.5),
-            max_jitter=self.config.get_setting('dm_rate_limit_max_jitter', 2.0)
-        )
-        
-        # Rate limiting state - bu değişkenler artık rate_limiter içinde
-        # Geriye dönük uyumluluk için basit bir erişim sağlayalım
-        self.pm_state = {
-            'burst_count': 0,
-            'hourly_count': 0,
-            'hour_start': datetime.now(),
-            'last_pm_time': None,
-            'consecutive_errors': 0
-        }
-
-    #
-    # DURUM YÖNETİMİ
-    #
     
-    def get_status(self) -> Dict[str, Any]:
-        """
-        Servisin mevcut durumunu döndürür.
+    def _parse_group_links(self):
+        """Grup bağlantılarını çevre değişkenlerinden veya yapılandırmadan yükler."""
+        # Önce çevre değişkeninden deneyelim
+        links_str = os.getenv("GROUP_LINKS", "")
         
-        Returns:
-            Dict: Servis durum bilgisi
-        """
-        rate_limiter_status = {}
-        if hasattr(self.rate_limiter, 'get_status'):
-            rate_limiter_status = self.rate_limiter.get_status()  # Bu satır eksikti
-
-        return {
-            'running': self.running,
-            'processed_dms': self.processed_dms,
-            'invites_sent': self.invites_sent,
-            'last_activity': self.last_activity.strftime("%Y-%m-%d %H:%M:%S"),
-            'rate_limiter': rate_limiter_status,
-            'recent_users_count': len(self.responded_users),
-            'cooldown_minutes': self.invite_cooldown_minutes
-        }
+        # Debug amaçlı log
+        logger.debug(f"Çevre değişkeninden okunan GROUP_LINKS: '{links_str}'")
+        
+        # Admin gruplarını da alalım (genellikle aynı liste)
+        admin_groups_str = os.getenv("ADMIN_GROUPS", "")
+        logger.debug(f"Çevre değişkeninden okunan ADMIN_GROUPS: '{admin_groups_str}'")
+        
+        # Virgülle ayrılmış değerleri dizi haline getir
+        links = [link.strip() for link in links_str.split(',') if link.strip()]
+        
+        # Bağlantı sayısını logla
+        logger.debug(f"Çevre değişkenlerinden {len(links)} link bulundu")
+        
+        return links
     
-    def resume(self) -> bool:
-        if not self.running:
-            self.running = True
-            logger.info("DM servisi aktif edildi")
-            return True
-        return False
-    
-    def pause(self) -> bool:
-        if self.running:
-            self.running = False
-            logger.info("DM servisi duraklatıldı")
-            return True
-        return False
-    
-    def debug_links(self) -> None:
-        """Grup linklerini ve mesaj şablonlarını debug amaçlı gösterir."""
-        print("\n===== DM SERVİSİ BAĞLANTI KONTROLÜ =====")
-        
-        # Linkleri göster
-        links = self._parse_group_links()
-        print(f"\nHam grup linkleri ({len(links)}):")
-        for i, link in enumerate(links):
-            print(f"  {i+1}. {link}")
-        
-        # Formatlı linkleri göster
-        formatted_links = self._get_formatted_group_links()
-        print(f"\nFormatlı grup linkleri ({len(formatted_links)}):")
-        for i, link in enumerate(formatted_links):
-            print(f"  {i+1}. {link}")
-        
-        # Örnek mesajı göster
-        print("\nÖrnek davet mesajı:")
-        invite_template = self._choose_invite_template()
-        group_links_str = "\n\nGruplarımız:\n" + "\n".join([f"• {link}" for link in formatted_links]) if formatted_links else "Üzgünüm, şu anda aktif grup linki bulunmamaktadır."
-        super_users_str = ""
-        if self.super_users:
-            valid_super_users = [f"• @{su}" for su in self.super_users if su]
-            if valid_super_users:
-                 super_users_str = "\n\nADMIN onaylı arkadaşlarıma menü için yazabilirsin:\n" + "\n".join(valid_super_users)
-        
-        full_message = f"{invite_template}{group_links_str}{super_users_str}"
-        print(f"\n{full_message}\n")
-        print("=======================================")
-    
-    def _get_invite_stats(self) -> Dict[str, int]:
-        """
-        Davet istatistiklerini alır.
-        
-        Returns:
-            Dict[str, int]: Günlük, haftalık ve aylık davet sayıları
-        """
-        try:
-            today = 0
-            week = 0
-            month = 0
-            
-            # Metot mevcutsa çağır
-            if hasattr(self.db, 'get_invite_count'):
-                today = self.db.get_invite_count(1)
-                week = self.db.get_invite_count(7)
-                month = self.db.get_invite_count(30)
-            else:
-                logger.error("Davet durumu kontrol edilemedi - 'get_invite_count' metodu yok.")
-                
-            return {
-                'today': today,
-                'week': week,
-                'month': month
-            }
-        except Exception as e:
-            logger.error(f"Davet istatistikleri alınırken hata: {str(e)}")
-            return {'today': 0, 'week': 0, 'month': 0}
-
-    #
-    # MESAJ ŞABLONLARI VE FORMATLAMALAR
-    #
-    
-    def _parse_group_links(self) -> List[str]:
-        """
-        Grup bağlantılarını çevre değişkenlerinden veya yapılandırmadan ayrıştırır.
-        
-        Returns:
-            List[str]: Grup linkleri listesi
-        """
-        env_links = os.environ.get("GROUP_LINKS", "")
-        admin_links = os.environ.get("ADMIN_GROUPS", "")
-        logger.debug(f"Çevre değişkeninden okunan GROUP_LINKS: '{env_links}'")
-        logger.debug(f"Çevre değişkeninden okunan ADMIN_GROUPS: '{admin_links}'")
-        links_str = env_links if env_links else admin_links
-        
-        if links_str:
-            links = [link.strip() for link in links_str.split(",") if link.strip()]
-            logger.debug(f"Çevre değişkenlerinden {len(links)} link bulundu")
-            return links
-        
-        # Config'den al
-        group_links_config = self.config.get_setting('group_links', [])
-        admin_groups_config = self.config.get_setting('admin_groups', [])
-        
-        if group_links_config:
-             logger.debug(f"config'den {len(group_links_config)} GROUP_LINKS bulundu")
-             return group_links_config
-        elif admin_groups_config:
-             logger.debug(f"config'den {len(admin_groups_config)} ADMIN_GROUPS bulundu")
-             return admin_groups_config
-
-        logger.warning("⚠️ Hiçbir yerde grup linki bulunamadı!")
-        default_links = ["https://t.me/omegleme", "https://t.me/sosyalcip", "https://t.me/sohbet"]
-        logger.info(f"Varsayılan {len(default_links)} link kullanılıyor")
-        return default_links
-
-    def _get_formatted_group_links(self) -> List[str]:
-        """
-        Grup linklerini isimlerle birlikte formatlayan metot.
-        
-        Returns:
-            List[str]: Formatlı grup linkleri
-        """
+    def _get_formatted_group_links(self):
+        """Grup linklerini isimlerle birlikte formatlayan yardımcı metot."""
         links = self._parse_group_links()
         if not links:
             logger.warning("Formatlanacak grup linki bulunamadı!")
@@ -349,434 +586,389 @@ class DirectMessageService(BaseService):
                 display_name = "Aşkım Sohbet"
             elif "duygu" in clean_link.lower():
                 display_name = "Duygusal Sohbet"
+            elif "t.me/" in clean_link:
+                # t.me linklerinden grup adını çıkar
+                group_name = clean_link.split("/")[-1]
+                display_name = group_name.capitalize()
+            elif "@" in clean_link:
+                # @ işaretli grup adlarını düzenle
+                group_name = clean_link.replace("@", "")
+                display_name = group_name.capitalize()
             else:
-                if "t.me/" in clean_link:
-                    # t.me linklerinden grup adını çıkar
-                    parts = clean_link.split("/")
-                    group_name = parts[-1] if len(parts) > 1 else "Grup"
-                    display_name = group_name.capitalize()
-                elif "@" in clean_link:
-                    # @ işaretli grup adlarını düzenle
-                    group_name = clean_link.replace("@", "")
-                    display_name = group_name.capitalize()
-                else:
-                    # Diğer link formatları için
-                    display_name = "Telegram Grubu"
+                # Diğer link formatları için
+                display_name = "Telegram Grubu"
                     
             # Bağlantı formatlama
             formatted_link = clean_link
             if "t.me/" not in clean_link and not clean_link.startswith("@"):
-                formatted_link = f"@{clean_link}"
+                formatted_link = f"@{clean_link.replace('@', '')}"
                 
             # Sonuç formatlama
             formatted_links.append(f"{display_name}: {formatted_link}")
                 
         return formatted_links
 
-    def _load_templates(self) -> None:
+    def _setup_rate_limiter(self):
+        """Hız sınırlayıcıyı yapılandırır."""
+        # Ana rate limiter
+        self.rate_limiter = AdaptiveRateLimiter(
+            initial_rate=self.config.get_setting('dm_rate_limit_initial_rate', 3),  # Başlangıçta daha düşük
+            period=self.config.get_setting('dm_rate_limit_period', 60),
+            error_backoff=self.config.get_setting('dm_rate_limit_error_backoff', 1.5),
+            max_jitter=self.config.get_setting('dm_rate_limit_max_jitter', 2.0)
+        )
+        
+        # Rate limiting state - bu değişkenler artık rate_limiter içinde
+        # Geriye dönük uyumluluk için basit bir erişim sağlayalım
+        self.pm_state = {
+            'burst_count': 0,
+            'hourly_count': 0,
+            'hour_start': datetime.now(),
+            'last_pm_time': None,
+            'consecutive_errors': 0
+        }
+    
+    def _load_templates(self):
         """Mesaj şablonlarını yükler."""
         try:
-            base_dir = Path(__file__).resolve().parent.parent.parent 
-            data_dir = base_dir / "data"
-            invites_path = data_dir / "invites.json"
-            responses_path = data_dir / "responses.json"
+            # Template dosyalarının yolları
+            invite_template_path = Path('data/invites.json')
+            response_template_path = Path('data/responses.json')
+            message_template_path = Path('data/messages.json')
             
-            logger.info(f"Şablon dosyaları: {invites_path}, {responses_path}")
+            # Yolları logla
+            logger.info(f"Şablon dosyaları: {invite_template_path}, {response_template_path}, {message_template_path}")
             
-            # Varsayılan şablonlar
-            self.invite_templates = [
-                "Merhaba! Grubuma katılmak ister misin?",
-                "Selam! Telegram gruplarımıza bekliyoruz!"
-            ]
-            self.redirect_templates = [
-                "Merhaba! Sizi zaten davet etmiştik. İşte gruplarımız:"
-            ]
-            self.flirty_messages = [
-                "Selam! Nasılsın?",
-                "Merhaba! Bugün nasıl geçiyor?"
-            ]
+            # Şablonlar için varsayılan değerler
+            self.invite_templates = []
+            self.redirect_templates = []
+            self.flirty_templates = []
+            self.group_message_templates = []
             
-            # Davet mesajlarını yükle
-            if os.path.exists(str(invites_path)):
-                with open(invites_path, 'r', encoding='utf-8') as f:
-                    invites_data = json.load(f)
-                    if isinstance(invites_data, list):
-                        self.invite_templates = invites_data
-                    elif isinstance(invites_data, dict) and 'invites' in invites_data:
-                        self.invite_templates = invites_data['invites']
-                    else:
-                        logger.warning("Geçersiz davet şablonu formatı, varsayılanlar kullanılıyor")
-            
-            # Yanıt mesajlarını yükle
-            if os.path.exists(str(responses_path)):
-                with open(responses_path, 'r', encoding='utf-8') as f:
-                    responses_data = json.load(f)
-                    if isinstance(responses_data, dict):
-                        if 'redirects' in responses_data:
-                            self.redirect_templates = responses_data['redirects']
-                        if 'flirty' in responses_data:
-                            self.flirty_messages = responses_data['flirty']
-            
-            logger.info(f"Yüklenen şablonlar: {len(self.invite_templates)} davet, "
-                       f"{len(self.redirect_templates)} yönlendirme, "
-                       f"{len(self.flirty_messages)} flirty")
-                
-        except Exception as e:
-            logger.error(f"Şablonlar yüklenirken hata: {str(e)}", exc_info=True)
-    
-    def _load_json_data(self, file_path: str, key: str = None, 
-                       default: Any = None, config_attr: str = None) -> Any:
-        """
-        JSON dosyasından veri yükler veya varsayılan değerleri döndürür.
-        
-        Args:
-            file_path: JSON dosya yolu
-            key: JSON içindeki anahtar (opsiyonel)
-            default: Varsayılan değer (opsiyonel)
-            config_attr: Config nesnesi üzerindeki özellik adı (opsiyonel)
-            
-        Returns:
-            Any: Yüklenen veri veya varsayılan değer
-        """
-        if config_attr and hasattr(self.config, config_attr):
-            config_value = getattr(self.config, config_attr)
-            if config_value:
-                return config_value
-        
-        result = default or []
-        
-        if os.path.exists(file_path):
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+            # Davet şablonlarını yükle
+            if invite_template_path.exists():
+                with open(invite_template_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    if key and key in data:
-                        result = data[key]
-                    else:
-                        result = data
-            except Exception as e:
-                logger.warning(f"{file_path} dosyası yüklenemedi: {str(e)}")
-        
-        return result
-    
-    def _choose_invite_template(self) -> str:
-        """
-        Rastgele bir davet şablonu seçer.
-        
-        Returns:
-            str: Seçilen davet mesajı
-        """
-        templates = getattr(self, 'invite_templates', None)
-        if not templates:
-            return "Merhaba! Grubumuza katılmak ister misin?"
-        if isinstance(templates, dict):
-            return random.choice(list(templates.values())) if templates else "Merhaba! Grubumuza katılmak ister misin?"
-        return random.choice(templates) if templates else "Merhaba! Grubumuza katılmak ister misin?"
-
-    def _choose_flirty_message(self) -> str:
-        """
-        Rastgele bir flirty mesaj seçer.
-        
-        Returns:
-            str: Seçilen flirty mesaj
-        """
-        templates = getattr(self, 'flirty_messages', None)
-        if not templates:
-             return "Selam! Nasılsın?"
-        return random.choice(templates) if templates else "Selam! Nasılsın?"
-
-    #
-    # ANA SERVİS DÖNGÜSÜ
-    #
-    
-    async def run(self) -> None:
-        """Ana servis döngü - Periyodik görevler için."""
-        logger.info("DirectMessageService ana döngü başlatıldı")
-        
-        try:
-            # Ana döngü - sadece periyodik istatistik loglama
-            while not self.stop_event.is_set():
-                if not self.running:
-                    await asyncio.sleep(60)  # Duraklatılmışsa bekle
-                    continue
-
-                # Periyodik istatistik loglaması
-                now = datetime.now()
-                last_log_time = getattr(self, '_last_log_time', now - timedelta(hours=1))
-                if (now - last_log_time).total_seconds() > 1800:
-                    self._last_log_time = now
-                    invite_stats = self._get_invite_stats()
-                    logger.info(f"DM servisi durum: İşlenen DM={self.processed_dms}, " +
-                               f"Gönderilen davet={self.invites_sent}, " +
-                               f"Bugün={invite_stats['today']}, Hafta={invite_stats['week']}")
-                
-                await asyncio.sleep(60)
-        
-        except asyncio.CancelledError:
-            logger.info("DM servis görevi (run) iptal edildi")
+                    self.invite_templates = data.get('invites', [])
+                    self.invite_first_templates = data.get('first_invite', [])
+                    self.redirect_templates = data.get('redirect_messages', [])
+                    self.invite_outros = data.get('invites_outro', [""])
+                    
+            # Yanıt şablonlarını yükle
+            if response_template_path.exists():
+                with open(response_template_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.flirty_templates = data.get('flirty', [])
+                    
+            # Grup mesaj şablonlarını yükle
+            if message_template_path.exists():
+                with open(message_template_path, 'r', encoding='utf-8') as f:
+                    self.group_message_templates = json.load(f)
+                    
+            # Yüklenen şablon sayılarını göster
+            logger.info(f"Yüklenen şablonlar: {len(self.invite_templates)} davet, {len(self.redirect_templates)} yönlendirme, {len(self.flirty_templates)} flirty, {len(self.group_message_templates)} grup mesajı")
         except Exception as e:
-            logger.error(f"DM servis (run) hatası: {str(e)}", exc_info=True)
-
-    #
-    # MESAJ İŞLEME
-    #
+            logger.error(f"Şablon yükleme hatası: {str(e)}")
+            # Varsayılanlar
+            self.invite_templates = ["Merhaba! Grubumuza bekleriz: {}"]
+            self.redirect_templates = ["Merhaba! Gruba katılabilirsiniz: {}"]
+            self.flirty_templates = ["Merhaba 😊"]
+            self.group_message_templates = ["Selam grup!"]
     
-    async def process_message(self, event) -> None:
-        """
-        Gelen özel mesajı işler ve yanıt verir.
-        
-        Args:
-            event: Telegram mesaj olayı
-        """
-        self.processed_dms += 1
-        sender = None
+    async def on_new_message(self, event):
+        """Yeni mesaj olayını işler"""
         try:
+            # Sadece özel mesajları ele al (grup mesajlarını değil)
+            if not event.is_private:
+                return
+                
+            # İşleme
             sender = await event.get_sender()
-            if not sender or sender.bot:
-                 return # Bot mesajlarını ve geçersiz gönderenleri yoksay
-
-            user_id = sender.id
-            username = getattr(sender, 'username', None)
-            first_name = getattr(sender, 'first_name', "")
-            
-            user_info = f"@{username}" if username else f"ID:{user_id}"
-            logger.info(f"📨 DM alındı: {user_info} - {event.text[:50]}...")
-            
-            # Rate limiting kontrolü
-            wait_time = self.rate_limiter.get_wait_time()
-            if (wait_time > 0):
-                logger.warning(f"Rate limit aşıldı, {wait_time:.1f}s bekleniyor: {user_info}")
-                await asyncio.sleep(wait_time)
-                if (self.rate_limiter.get_wait_time() > 0):
-                     logger.warning("Bekleme sonrası hala hız sınırı aktif, mesaj işlenemiyor.")
-                     return
-            
-            # Kullanıcıyı veritabanına ekle/güncelle
-            user_data = {
-                'user_id': user_id,
-                'username': username,
-                'first_name': first_name,
-                'last_name': getattr(sender, 'last_name', ""),
-                'is_bot': False
-            }
-            if hasattr(self.db, 'add_or_update_user'):
-                self.db.add_or_update_user(user_data)
-            else:
-                logger.error("Veritabanı nesnesinde 'add_or_update_user' metodu bulunamadı.")
-
-            # Kullanıcının daha önce davet edilip edilmediğini kontrol et
-            has_been_invited = self._check_user_invited(user_id)
-
-            # Eğer mesaj bir soru veya sohbet başlatma amaçlıysa yönlendirici bir yanıt ver
-            message_text = event.text.lower() if event.text else ""
-            if self._is_conversation_starter(message_text):
-                await self._send_conversation_response(event)
+            if sender:
+                user_data = {
+                    'user_id': sender.id,
+                    'username': getattr(sender, 'username', None),
+                    'first_name': getattr(sender, 'first_name', None),
+                    'last_name': getattr(sender, 'last_name', None)
+                }
+                
+                # Kullanıcıyı işle
+                await self._process_user(user_data, event=event)
+                
+        except Exception as e:
+            logger.error(f"Özel mesaj işleme hatası: {str(e)}")
+    
+    async def handle_new_message(self, event):
+        """Yeni mesaj olayını işler."""
+        try:
+            if not event.message or not event.message.text:
                 return
 
-            # Kullanıcının davet edilip edilmediğine göre farklı mesajlar gönder
-            if has_been_invited:
-                await self._send_redirect_message(event)
+            # Önce mesaj loglaması - sorunu teşhis için
+            sender = await event.get_sender()
+            sender_id = sender.id if sender else "bilinmiyor"
+            logger.debug(f"DM alındı: {sender_id} - '{event.message.text[:20]}...'")
+            
+            # is_private kontrolü - SADECE DM'LERİ İŞLE
+            if not event.is_private:
+                logger.debug(f"Özel mesaj değil, atlanıyor: {event.chat_id}")
+                return
+                
+            # Bot mention edildi mi?
+            if event.message.mentioned:
+                await self._handle_mention(event)
+                
+            # Bot'un mesajına cevap mı?
+            elif event.message.reply_to and event.message.reply_to.reply_to_msg_id:
+                # Cevap verilen mesajın kime ait olduğunu kontrol et
+                replied_msg = await event.message.get_reply_message()
+                # my_id değişkeninin varlığını kontrol et
+                bot_id = getattr(self, 'my_id', None)
+                if replied_msg and replied_msg.sender_id == bot_id:
+                    # Bot'un mesajına cevap verilmiş
+                    logger.info(f"Bot mesajına cevap işleniyor: {event.message.text}")
+                    await self._handle_reply_to_bot(event)
+                    
+            # Özel komutlar
+            elif event.message.text.startswith('/'):
+                await self._handle_command(event)
+            # DİREK YENİ MESAJ - OTOMATİK CEVAP
             else:
-                invite_sent = await self._send_invite_message(event)
-                if invite_sent:
-                    self._mark_user_invited(user_id)
-                    logger.info(f"✅ Davet yanıtı gönderildi ve kaydedildi: {user_info}")
-                else:
-                    logger.warning(f"Davet mesajı gönderilemedi: {user_info}")
-            
-            # Rate limiter'ı güncelle ve son aktivite zamanını kaydet
-            self.rate_limiter.mark_used()
-            self.last_activity = datetime.now()
-            
-        except errors.FloodWaitError as e:
-            wait_time = e.seconds
-            logger.warning(f"FloodWaitError DM işlerken: {wait_time} saniye bekleniyor")
-            self.rate_limiter.register_error(e)
-            await asyncio.sleep(wait_time + 1)
+                # Direkt DM'lere otomatik cevap ver
+                logger.info(f"Yeni DM alındı, otomatik cevap gönderiliyor: {sender_id}")
+                user_data = {
+                    'user_id': sender.id,
+                    'username': getattr(sender, 'username', None),
+                    'first_name': getattr(sender, 'first_name', None),
+                    'last_name': getattr(sender, 'last_name', None)
+                }
+                await self._process_user(user_data, event)
+                
         except Exception as e:
-            logger.error(f"DM işleme hatası: {str(e)}", exc_info=True)
-            if not isinstance(e, (errors.UserPrivacyRestrictedError, errors.UserNotMutualContactError)):
-                self.rate_limiter.register_error(e)
-    
-    def _is_conversation_starter(self, message_text: str) -> bool:
-        """
-        Mesajın bir sohbet başlatıcı olup olmadığını kontrol eder.
-        
-        Args:
-            message_text: Kontrol edilecek mesaj
+            logger.error(f"DM mesajı işleme hatası: {str(e)}")
+            logger.debug(traceback.format_exc())  # Stack trace ekleyerek detaylı hata bilgisi
+
+    async def handle_private_message(self, event):
+        """Sadece özel mesajları işler"""
+        if not event.is_private:
+            return  # Sadece özel mesajları işle
             
-        Returns:
-            bool: Sohbet başlatıcı ise True
-        """
-        if not message_text or len(message_text) < 3:
-            return False
-            
-        # Soru işaretleri ve anahtar kelimeler
-        return ('?' in message_text or 
-                any(word in message_text for word in [
-                    'merhaba', 'selam', 'nasıl', 'naber', 'hello', 'hi', 'hey'
-                ]))
-    
-    async def _send_conversation_response(self, event) -> None:
-        """
-        Sohbet başlatan kullanıcıya yanıt verir.
-        
-        Args:
-            event: Telegram mesaj olayı
-        """
         try:
-            # .env'den yönlendirme mesajını çek
-            dm_response_template = os.environ.get(
-                "DM_RESPONSE_TEMPLATE", 
-                "Merhaba! Şu anda yoğunum, lütfen arkadaşlarımdan birine yazarak destek alabilirsin:"
-            )
+            sender = await event.get_sender()
+            if sender:
+                logger.info(f"Özel mesaj alındı: {sender.id} (@{getattr(sender, 'username', 'bilinmiyor')})")
+                
+                # Kullanıcı verisini hazırla
+                user_data = {
+                    'user_id': sender.id,
+                    'username': getattr(sender, 'username', None),
+                    'first_name': getattr(sender, 'first_name', None),
+                    'last_name': getattr(sender, 'last_name', None)
+                }
+                
+                # Kullanıcıyı işle ve otomatik cevap ver
+                await self._process_user(user_data, event)
+                
+        except Exception as e:
+            logger.error(f"Özel mesaj işleme hatası: {str(e)}")
+
+    async def _handle_reply_to_bot(self, event):
+        """Bot mesajlarına verilen yanıtları işler"""
+        try:
+            # Yanıt metni analizi
+            message_text = event.message.text.lower()
+            sender = await event.get_sender()
             
-            # Super user listesi ve footer
+            # Duygu analizi (basit kural tabanlı)
+            is_positive = any(word in message_text for word in ["teşekkür", "sağol", "evet", "tamam", "iyi", "güzel"])
+            is_question = any(word in message_text for word in ["?", "ne", "nasıl", "nerede", "kim", "ne zaman", "neden"])
+            is_greeting = any(word in message_text for word in ["merhaba", "selam", "hey", "hi", "hello"])
+            
+            # Yanıt türünü belirle
+            response_type = 'flirty'  # Varsayılan türü flörtöz olarak ayarla
+            
+            if is_greeting:
+                response_type = 'greeting'
+            elif is_question:
+                response_type = 'question'
+            elif is_positive:
+                response_type = 'positive'
+                
+            # Flörtöz bir yanıt seç (responses.json dosyasından)
+            response = self._select_response(response_type)
+            
+            # Yanıtı gönder
+            await event.reply(response)
+            if hasattr(self, 'reply_count'):
+                self.reply_count += 1
+            
+            # DM atma denemesi - kullanıcıya özel mesaj gönder
+            await self._try_send_dm_to_user(sender)
+            
+            # Kullanıcı etkileşim profilini güncelle (yeni özellik)
+            await self._update_user_interaction_profile(sender.id, message_text)
+            
+        except Exception as e:
+            logger.error(f"Bot mesajına cevap işleme hatası: {str(e)}")
+
+    async def _try_send_dm_to_user(self, user):
+        """Bot ile etkileşime giren kullanıcıya DM gönderir"""
+        if not user:
+            return
+            
+        try:
+            # Kullanıcı bilgileri
+            user_id = user.id
+            username = getattr(user, 'username', None)
+            first_name = getattr(user, 'first_name', None)
+            last_name = getattr(user, 'last_name', None)
+            
+            # Kullanıcı verisi oluştur
+            user_data = {
+                "user_id": user_id,
+                "username": username,
+                "first_name": first_name,
+                "last_name": last_name
+            }
+            
+            # Kullanıcı yakın zamanda DM aldı mı kontrol et
+            if self.db and hasattr(self.db, 'was_recently_contacted'):
+                recent_contact = await self._run_async_db_method(
+                    self.db.was_recently_contacted,
+                    user_id,
+                    self.dm_cooldown_minutes
+                )
+                
+                if recent_contact:
+                    logger.debug(f"Kullanıcı {username or user_id} yakın zamanda DM aldı, tekrar gönderilmiyor")
+                    return False
+            
+            # Kullanıcıyı işle ve DM gönder (kendi metodu çağrı)
+            await self._process_user(user_data)
+            logger.info(f"Etkileşimli kullanıcıya DM gönderildi: {username or user_id}")
+            return True
+            
+        except Exception as e:
+            logger.debug(f"Kullanıcıya DM gönderme hatası: {str(e)}")
+            return False
+    
+    async def _process_user(self, user_data, event=None):
+        """Tek bir kullanıcıyı işler ve DM gönderir"""
+        try:
+            user_id = user_data.get('user_id')
+            username = user_data.get('username')
+            
+            if not user_id:
+                logger.error("Kullanıcı ID eksik, işlem yapılamıyor")
+                return
+            
+            # Kullanıcıyı veritabanına ekle
+            if self.db and hasattr(self.db, 'add_user'):
+                try:
+                    await self._run_async_db_method(
+                        self.db.add_user, 
+                        user_id, 
+                        username, 
+                        user_data.get('first_name'), 
+                        user_data.get('last_name')
+                    )
+                except Exception as db_err:
+                    logger.warning(f"Veritabanı işlemi başarısız: {str(db_err)}")
+            
+            # Eğer direkt mesaj olayı varsa ve henüz cevap verilmediyse, yanıt ver
+            if event and user_id:
+                logger.info(f"Kullanıcıya otomatik cevap gönderiliyor: {user_id}")
+                
+                # was_recently_invited kontrolü güvenli yapılıyor
+                was_invited = False
+                try:
+                    if self.db and hasattr(self.db, 'was_recently_invited'):
+                        was_invited = await self._run_async_db_method(
+                            self.db.was_recently_invited,
+                            user_id,
+                            self.invite_cooldown_minutes
+                        )
+                except Exception as check_err:
+                    logger.warning(f"Davet kontrolü başarısız: {str(check_err)}")
+                    # was_invited = False kalacak
+                
+                # Uygun yanıt gönder
+                success = False
+                if was_invited:
+                    success = await self._send_redirect_message(event, user_data)
+                else:
+                    success = await self._send_invite_message(event, user_data)
+                    
+                # Başarılıysa kullanıcıyı listeye ekle
+                if success:
+                    self.responded_users.add(user_id)
+                    logger.info(f"Yanıt başarılı şekilde gönderildi: {user_id}")
+                    self.processed_dms += 1
+                else:
+                    logger.warning(f"Yanıt gönderilemedi: {user_id}")
+                    
+        except Exception as e:
+            logger.error(f"Kullanıcı işleme hatası: {str(e)}")
+            logger.debug(traceback.format_exc())
+    
+    async def _send_invite_message(self, event, user_data):
+        """Kullanıcıya davet mesajı gönderir"""
+        success = False
+        try:
+            sender = await event.get_sender()
+            user_id = getattr(sender, 'id', None)
+            user_name = getattr(sender, 'first_name', "Kullanıcı")
+            
+            # Davet şablonu seç ve formatla
+            invite_template = self._choose_invite_template()
+            invite_message = invite_template.format(user_name=user_name)
+            
+            # Grup linkleri ekle
+            formatted_links = self._get_formatted_group_links()
+            links_text = "\n\n" + ("\n".join([f"• {link}" for link in formatted_links]) 
+                        if formatted_links else "Üzgünüm, şu anda aktif grup linki bulunmamaktadır.")
+            
+            # Super users ekle
             super_users_text = ""
             if self.super_users:
                 valid_super_users = [f"• @{su}" for su in self.super_users if su]
                 if valid_super_users:
                     super_users_text = f"\n\n{self.dm_footer_message}\n" + "\n".join(valid_super_users)
-                    
-            await event.respond(f"{dm_response_template}{super_users_text}")
-            self.rate_limiter.mark_used()
-        except Exception as e:
-            logger.error(f"Konuşma yanıtı gönderirken hata: {str(e)}", exc_info=True)
-    
-    def _check_user_invited(self, user_id: int) -> bool:
-        """
-        Kullanıcının daha önce davet edilip edilmediğini kontrol eder.
-        
-        Args:
-            user_id: Kontrol edilecek kullanıcı ID'si
             
-        Returns:
-            bool: Kullanıcı daha önce davet edildi ise True
-        """
-        try:
-            # Veritabanındaki davet sayısı kontrol metodu varsa kullan
-            if hasattr(self.db, 'get_invite_count'):
-                invite_count = self.db.get_invite_count(user_id)
-                return bool(invite_count and invite_count > 0)
+            # Tam mesaj oluştur
+            full_message = f"{invite_message}{links_text}{super_users_text}"
             
-            # Alternatif olarak was_recently_invited metodunu kontrol et
-            if hasattr(self.db, 'was_recently_invited'):
-                return self.db.was_recently_invited(user_id, self.invite_cooldown_minutes)
-            elif hasattr(self.db, 'check_recently_invited'):
-                return self.db.check_recently_invited(user_id, self.invite_cooldown_minutes)
-            
-            logger.error("Davet durumu kontrol edilemedi - ilgili veritabanı metotları eksik")
-            return False
-        except Exception as e:
-            logger.error(f"Kullanıcı davet kontrolü hatası: {str(e)}")
-            return False
-    
-    def _mark_user_invited(self, user_id: int) -> bool:
-        """
-        Kullanıcıyı veritabanında davet edildi olarak işaretler.
-        
-        Args:
-            user_id: İşaretlenecek kullanıcı ID'si
-            
-        Returns:
-            bool: İşlem başarılı ise True
-        """
-        try:
-            if hasattr(self.db, 'mark_user_invited'):
-                self.db.mark_user_invited(user_id)
-                self.invites_sent += 1
-                self.responded_users.add(user_id)
-                return True
-            else:
-                logger.warning(f"Davet gönderildi ama veritabanında işaretlenemedi (metod yok): {user_id}")
-                self.invites_sent += 1
-                self.responded_users.add(user_id)
-                return False
-        except Exception as e:
-            logger.error(f"Kullanıcı davet kaydı hatası: {str(e)}")
-            return False
-    
-    #
-    # DAVET GÖNDERİM
-    #
-    
-    async def _send_invite_message(self, event) -> bool:
-        """
-        Kullanıcıya davet mesajı gönderir.
-        
-        Args:
-            event: Telegram mesaj olayı
-            
-        Returns:
-            bool: Mesaj gönderildiyse True
-        """
-        success = False
-        try:
-            sender = await event.get_sender()
-            user_name = getattr(sender, 'first_name', "Kullanıcı")
-            
-            # Şablon mesajı seç
-            invite_template = self._choose_invite_template()
-            
-            # t.me/{} formatını düzelt - gerçek grup ismi veya varsayılan değer koy
-            formatted_invite = invite_template
-            if "{}" in invite_template:
-                # Grup bağlantılarını al
-                group_links = self._parse_group_links()
-                # Varsayılan değer
-                default_group = "@" + "sohbet"  # Varsayılan değer
-                
-                # Eğer grup linkleri varsa ilk grubu kullan
-                if group_links and len(group_links) > 0:
-                    if group_links[0].startswith("t.me/"):
-                        first_group = group_links[0]
-                    else:
-                        first_group = f"@{group_links[0]}" if not group_links[0].startswith('@') else group_links[0]
-                    # {} kısmını replace et
-                    formatted_invite = invite_template.replace("{}", first_group)
-                else:
-                    # Grup yoksa varsayılan değeri kullan
-                    formatted_invite = invite_template.replace("{}", default_group)
-            
-            # Grup bağlantıları oluştur
-            formatted_links = self._get_formatted_group_links()
-            links_text = ""
-            if formatted_links:
-                links_text = "\n\nGruplarımız:\n" + "\n".join([f"• {link}" for link in formatted_links])
-            else:
-                links_text = "\n\nÜzgünüm, şu anda aktif grup linki bulunmamaktadır."
-            
-            # Super users ve yönlendirme mesajını ekle (.env'den çek)
-            footer_message = os.environ.get("DM_FOOTER_MESSAGE", "Menü için müsait olan arkadaşlarıma yazabilirsin:")
-            super_users_text = ""
-            if self.super_users:
-                valid_super_users = [f"• @{su}" for su in self.super_users if su]
-                if valid_super_users:
-                    super_users_text = f"\n\n{footer_message}\n" + "\n".join(valid_super_users)
-            
-            # Tüm mesajı birleştir
-            full_message = f"{formatted_invite}{links_text}{super_users_text}"
+            # Hız sınırlama kontrolü
+            if hasattr(self, 'rate_limiter'):
+                wait_time = self.rate_limiter.get_wait_time()
+                if wait_time > 0:
+                    logger.debug(f"Rate limit nedeniyle {wait_time:.1f} saniye bekleniyor")
+                    await asyncio.sleep(wait_time)
             
             # Mesajı gönder
             await event.respond(full_message)
-            logger.info(f"Davet mesajı gönderildi: {sender.id}")
+            logger.info(f"Davet mesajı gönderildi: {user_id}")
+            self.invites_sent += 1
             success = True
+            
+            # Rate limiter'ı güncelle
+            self.rate_limiter.mark_used()
+            
+            # Veritabanını güncelle
+            if user_id and self.db and hasattr(self.db, 'mark_user_invited'):
+                await self._run_async_db_method(self.db.mark_user_invited, user_id)
+                
         except errors.FloodWaitError as e:
-            logger.warning(f"FloodWaitError davet gönderirken: {e.seconds}s")
-            await asyncio.sleep(e.seconds + 1)
+            wait_time = e.seconds
+            logger.warning(f"FloodWaitError davet gönderirken: {wait_time} saniye bekleniyor")
+            self.rate_limiter.register_error(e)
+            await asyncio.sleep(wait_time + 1)
         except Exception as e:
             logger.error(f"Davet mesajı gönderirken hata: {str(e)}", exc_info=True)
         return success
-
-    async def _send_redirect_message(self, event) -> bool:
-        """
-        Zaten davet edilmiş kullanıcıya yönlendirme mesajı gönderir.
-        
-        Args:
-            event: Telegram mesaj olayı
-            
-        Returns:
-            bool: Mesaj gönderildiyse True
-        """
+    
+    async def _send_redirect_message(self, event, user_data):
+        """Zaten davet edilmiş kullanıcıya yönlendirme mesajı gönderir"""
         success = False
         try:
             sender = await event.get_sender()
@@ -799,769 +991,358 @@ class DirectMessageService(BaseService):
                         if formatted_links else "Üzgünüm, şu anda aktif grup linki bulunmamaktadır.")
             
             # Mesajı gönder
-            await event.respond(redirect_message + links_text)
-            logger.info(f"Redirect mesajı gönderildi: {sender.id}")
+            await event.respond(f"{redirect_message}{links_text}")
+            logger.info(f"Yönlendirme mesajı gönderildi: {sender.id}")
             success = True
+            
+            # Rate limiter'ı güncelle
+            self.rate_limiter.mark_used()
+
         except errors.FloodWaitError as e:
-            logger.warning(f"FloodWaitError redirect gönderirken: {e.seconds}s")
-            await asyncio.sleep(e.seconds + 1)
+            wait_time = e.seconds
+            logger.warning(f"FloodWaitError yönlendirme gönderirken: {wait_time} saniye bekleniyor")
+            self.rate_limiter.register_error(e)
+            await asyncio.sleep(wait_time + 1)
         except Exception as e:
-            logger.error(f"Redirect mesajı gönderirken hata: {str(e)}", exc_info=True)
+            logger.error(f"Yönlendirme mesajı gönderirken hata: {str(e)}", exc_info=True)
         return success
     
-    #
-    # BULK PROCESSING
-    #
+    def _choose_invite_template(self):
+        """Rastgele bir davet şablonu seçer"""
+        templates = getattr(self, 'invite_templates', ["Merhaba {user_name}! Grubumuza katılmak ister misiniz?"])
+        if not templates:
+            return "Merhaba {user_name}! Grubumuza katılmak ister misiniz?"
+            
+        return random.choice(templates)
     
-    async def process_dm_users(self) -> None:
-        """Periyodik olarak veritabanından kullanıcıları çekip DM gönderir."""
-        logger.info("DM işleme servisi (process_dm_users) başlatıldı")
-        
-        while not self.stop_event.is_set():
-            try:
-                if not self.running:
-                    await asyncio.sleep(60)  # Duraklatılmışsa bekle
-                    continue
-                    
-                logger.info(f"🔄 DM işleme döngüsü başladı (Toplam gönderilen: {self.invites_sent})")
-                
-                # Büyükçe bir kullanıcı batch'i işle
-                batch_limit = self.config.get_setting('dm_batch_limit', 10)
-                sent_in_batch = await self._process_user_batch(limit=batch_limit)
-                logger.info(f"Batch tamamlandı, {sent_in_batch} davet gönderildi.")
-                
-                if sent_in_batch > 0:
-                    logger.info(f"Başarılı gönderimler: {sent_in_batch}")
-                    await asyncio.sleep(random.uniform(30, 60))  # Başarılı gönderimler sonrası daha uzun bekle
-                
-                # Eğer mesaj gönderilemediyse daha kısa bekle
-                if sent_in_batch == 0:
-                    wait_seconds = min(wait_seconds, 300)  # Max 5 dakika bekle
-                    logger.debug(f"Mesaj gönderimi yapılamadı, {wait_seconds // 60} dakika bekleniyor")
-                
-                if sent_in_batch > 0:
-                    self.last_activity = datetime.now()
-                
-                # Bekleme süresi - daha dinamik
-                wait_seconds = self.config.get_setting('dm_process_interval_minutes', 5) * 60
-                
-                # Eğer mesaj gönderilemediyse daha kısa bekle
-                if sent_in_batch == 0:
-                    wait_seconds = min(wait_seconds, 120)  # En fazla 2 dk
-                    
-                logger.debug(f"⏳ {wait_seconds // 60} dakika sonra process_dm_users tekrar çalışacak")
-                await asyncio.sleep(wait_seconds)
-                
-            except asyncio.CancelledError:
-                logger.info("process_dm_users görevi iptal edildi.")
-                break
-            except Exception as e:
-                logger.error(f"DM işleme (process_dm_users) hatası: {str(e)}", exc_info=True)
-                await asyncio.sleep(120)  # Hata sonrası 2 dk bekle
-
-    async def _process_user_batch(self, limit: int = 10) -> int:
-        """
-        Belirtilen limit kadar kullanıcıya DM gönderir.
-        
-        Args:
-            limit: İşlenecek maksimum kullanıcı sayısı
-            
-        Returns:
-            int: Başarıyla gönderilmiş mesaj sayısı
-        """
-        from colorama import Fore, Style
-        sent_count_in_batch = 0
-        
-        try:
-            # Veritabanı metodu kontrolü
-            if not hasattr(self.db, 'get_users_for_invite'):
-                logger.error("Veritabanı nesnesinde get_users_for_invite metodu bulunamadı!")
-                return 0
-                
-            # Daha fazla kullanıcı çek (3 katı) - bazıları işlenemeyeceği için
-            users_to_invite = self.db.get_users_for_invite(
-                limit=limit*3, 
-                cooldown_minutes=self.invite_cooldown_minutes
-            )
-            
-            if not users_to_invite:
-                logger.debug("Davet edilecek yeni kullanıcı bulunamadı.")
-                return 0
-                
-            logger.info(f"{len(users_to_invite)} kullanıcı havuzu hazırlandı (limit: {limit})")
-            
-            # Kullanıcıları karıştır - randomizasyon
-            random.shuffle(users_to_invite)
-            
-            # Başarılı gönderim sayacı
-            successful_sends = 0
-            
-            # Her kullanıcıyı işle
-            for user in users_to_invite:
-                # Durdurma kontrolü
-                if self.stop_event.is_set():
-                    break
-                    
-                # Limit kontrolü
-                if successful_sends >= limit:
-                    break
-                
-                # Kullanıcı bilgilerini çıkar
-                user_id, username, first_name = self._extract_user_info(user)
-                
-                # Kullanıcı geçersizse atla
-                if not user_id:
-                    continue
-                
-                # Bu oturumda zaten yanıt verilmiş mi kontrol et
-                if user_id in self.responded_users:
-                    logger.debug(f"Bu kullanıcıya ({user_id}) daha önce yanıt verildi, geçiliyor")
-                    continue
-                
-                # Veritabanı üzerinden yakın zamanda davet edilmiş mi kontrol et
-                if self._was_recently_invited(user_id):
-                    logger.debug(f"Bu kullanıcı ({user_id}) yakın zamanda davet edilmiş, atlanıyor")
-                    continue
-
-                # User entity kontrolü
-                user_entity = await self._get_user_entity(user_id, username)
-                if not user_entity:
-                    logger.debug(f"Kullanıcı varlığı alınamadı: {user_id}")
-                    continue
-                
-                # Mesajları gönder
-                try:
-                    # İlk mesaj öncesi bekleme
-                    wait_before_message = random.uniform(5, 15)
-                    logger.debug(f"İlk mesaj öncesi {wait_before_message:.1f}s bekleniyor...")
-                    await asyncio.sleep(wait_before_message)
-                    
-                    # Flirty mesaj gönder
-                    flirty_message = self._choose_flirty_message()
-                    await self.client.send_message(user_entity, flirty_message)
-                    self.rate_limiter.mark_used()
-                    
-                    # Mesajlar arası bekleme
-                    wait_between = random.uniform(8, 15)
-                    logger.debug(f"Mesajlar arası {wait_between:.1f}s bekleniyor...")
-                    await asyncio.sleep(wait_between)
-                    
-                    # Davet mesajını oluştur
-                    invite_message = self._choose_invite_template()
-                    formatted_links = self._get_formatted_group_links()
-                    group_links_str = "\n\nGruplarımız:\n" + "\n".join([f"• {link}" for link in formatted_links]) if formatted_links else ""
-                    
-                    # Super users ekle
-                    super_users_str = ""
-                    if self.super_users:
-                        valid_super_users = [f"• @{su}" for su in self.super_users if su]
-                        if valid_super_users:
-                            super_users_str = "\n\nADMIN onaylı arkadaşlarıma menü için yazabilirsin:\n" + "\n".join(valid_super_users)
-                            
-                    # Birleşik mesaj
-                    full_message = f"{invite_message}{group_links_str}{super_users_str}"
-                    
-                    # Davet mesajı gönder
-                    await self.client.send_message(user_entity, full_message)
-                    self.rate_limiter.mark_used()
-                    
-                    # İşaretleme ve takip
-                    if hasattr(self.db, 'mark_user_invited'):
-                        self.db.mark_user_invited(user_id)
-                    self.responded_users.add(user_id)
-                    self.invites_sent += 1
-                    sent_count_in_batch += 1
-                    
-                    # Log
-                    logger.info(f"✅ Davet gönderildi: {username or user_id}")
-                    print(f"{Fore.GREEN}✅ Davet gönderildi: {username or user_id}{Style.RESET_ALL}")
-                    
-                    # Başarı sayacını artır
-                    successful_sends += 1
-                    
-                    # Sonraki kullanıcıya geçmeden önce bekle
-                    batch_wait = random.uniform(15, 25)
-                    logger.debug(f"Kullanıcılar arası {batch_wait:.1f}s bekleniyor...")
-                    await asyncio.sleep(batch_wait)
-                    
-                except errors.FloodWaitError as e:
-                    # Rate limit hataları için bekle
-                    wait_time_flood = e.seconds
-                    logger.warning(f"⚠️ FloodWaitError: {wait_time_flood} saniye bekleniyor")
-                    print(f"{Fore.RED}⚠️ FloodWaitError: {wait_time_flood} saniye bekleniyor{Style.RESET_ALL}")
-                    self.rate_limiter.register_error(e)
-                    await asyncio.sleep(wait_time_flood + 1)
-                    break  # Bu batch'i durdur
-                    
-                except (errors.UserPrivacyRestrictedError, errors.UserNotMutualContactError) as privacy_err:
-                    # Gizlilik kısıtlamaları
-                    logger.warning(f"Gizlilik kısıtlaması: {user_id} / @{username} - {privacy_err}")
-                    if hasattr(self.db, 'mark_user_uncontactable'):
-                        self.db.mark_user_uncontactable(user_id, str(privacy_err))
-                    continue  # Sonraki kullanıcıya geç
-
-                except Exception as send_err:
-                    # Diğer gönderim hataları
-                    error_msg = str(send_err)
-                    logger.error(f"Kullanıcıya davet gönderirken hata: {user_id} - {error_msg}", exc_info=True)
-                    print(f"{Fore.RED}❌ Kullanıcıya davet gönderilirken hata: {user_id} - {error_msg[:60]}{Style.RESET_ALL}")
-                    self.rate_limiter.register_error(send_err)
-                    
-                    # Too many requests için daha uzun bekleme
-                    if "Too many requests" in error_msg:
-                        wait_time_tmr = random.randint(180, 300)
-                        logger.warning(f"Too many requests hatası: {wait_time_tmr} saniye bekleniyor")
-                        print(f"{Fore.RED}⚠️ Too many requests hatası - {wait_time_tmr} saniye bekleniyor{Style.RESET_ALL}")
-                        await asyncio.sleep(wait_time_tmr)
-                        break  # Bu batch'i durdur
-                    else:
-                        await asyncio.sleep(random.uniform(3, 7))
-                        continue  # Sonraki kullanıcıya geç
-            
-        except Exception as batch_err:
-            # Batch hazırlama hatası
-            logger.error(f"Kullanıcı toplu işleme hatası: {str(batch_err)}", exc_info=True)
-            print(f"{Fore.RED}❌ Kullanıcı toplu işleme hatası: {str(batch_err)}{Style.RESET_ALL}")
-            
-        return sent_count_in_batch
-
-    def _extract_user_info(self, user: Union[tuple, dict, Any]) -> Tuple[Optional[int], Optional[str], str]:
-        """
-        Farklı formatlardaki kullanıcı verilerinden ID, kullanıcı adı ve ad çıkarır.
-        
-        Args:
-            user: Kullanıcı verisi (tuple veya dict)
-            
-        Returns:
-            Tuple: (user_id, username, first_name)
-        """
-        user_id = None
-        username = None
-        first_name = 'Kullanıcı'
-        
-        try:
-            if isinstance(user, tuple):
-                user_id = user[0] if len(user) > 0 else None
-                username = user[1] if len(user) > 1 else None
-                first_name = user[2] if len(user) > 2 else 'Kullanıcı'
-            elif isinstance(user, dict):
-                user_id = user.get('user_id')
-                username = user.get('username')
-                first_name = user.get('first_name', 'Kullanıcı')
-            else:
-                logger.warning(f"Beklenmeyen kullanıcı veri tipi: {type(user)}")
-        except Exception as e:
-            logger.error(f"Kullanıcı verisi çıkarılırken hata: {str(e)}")
-            
-        return user_id, username, first_name
-
-    def _was_recently_invited(self, user_id: int) -> bool:
-        """
-        Kullanıcının yakın zamanda davet edilip edilmediğini kontrol eder.
-        
-        Args:
-            user_id: Kontrol edilecek kullanıcı ID'si
-            
-        Returns:
-            bool: Yakın zamanda davet edildiyse True
-        """
-        try:
-            # Önce metot varsa kullan
-            if hasattr(self.db, 'was_recently_invited'):
-                return self.db.was_recently_invited(user_id, self.invite_cooldown_minutes)
-            elif hasattr(self.db, 'check_recently_invited'):
-                return self.db.check_recently_invited(user_id, self.invite_cooldown_minutes)
-            
-            # Manuel kontrol
-            elif hasattr(self.db, 'conn') and hasattr(self.db, 'cursor'):
-                try:
-                    cooldown = datetime.now() - timedelta(minutes=self.invite_cooldown_minutes)
-                    cooldown_timestamp = cooldown.timestamp()
-                    
-                    self.db.cursor.execute(
-                        """
-                        SELECT 1 FROM users 
-                        WHERE user_id = ? AND last_invited IS NOT NULL AND last_invited > ?
-                        """, 
-                        (user_id, cooldown_timestamp)
-                    )
-                    
-                    return bool(self.db.cursor.fetchone())
-                except Exception as db_err:
-                    logger.error(f"Veritabanı sorgusu hatası: {str(db_err)}")
-        except Exception as e:
-            logger.error(f"recently_invited kontrolü hatası: {str(e)}")
-            
-        return False
-
-    async def _get_user_entity(self, user_id: int, username: Optional[str] = None):
-        """
-        Kullanıcı ID'si veya kullanıcı adı ile kullanıcı entitysini alır.
-        
-        Args:
-            user_id: Kullanıcı ID'si
-            username: Kullanıcı adı (opsiyonel)
-            
-        Returns:
-            User: Telethon kullanıcı nesnesi veya None
-        """
-        try:
-            if username:
-                # Önce kullanıcı adı ile dene
-                try:
-                    return await self.client.get_entity(username)
-                except:
-                    pass
-                    
-            # Sonra ID ile dene
-            return await self.client.get_entity(int(user_id))
-            
-        except (ValueError, TypeError) as e:
-            logger.error(f"Geçersiz kullanıcı ID'si/adı: {user_id}/{username} - {e}")
-        except errors.UsernameInvalidError:
-            logger.warning(f"Geçersiz kullanıcı adı: @{username}")
-        except errors.PeerIdInvalidError:
-            logger.warning(f"Kullanıcı ID bulunamadı: {user_id}")
-        except Exception as e:
-            logger.warning(f"Kullanıcı bulunamadı: {user_id} / @{username} - {str(e)}")
-            
-        return None
+    async def _run_async_db_method(self, method, *args, **kwargs):
+        """Veritabanı metodunu thread-safe biçimde çalıştırır."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, 
+            lambda: method(*args, **kwargs)
+        )
     
-    async def _process_user(self, user: Dict[str, Any]) -> bool:
+    async def get_status(self) -> Dict[str, Any]:
         """
-        Tek bir kullanıcıyı işler ve DM gönderir.
+        Servisin mevcut durumunu döndürür.
+        
+        Returns:
+            Dict: Servis durum bilgileri
+        """
+        status = await super().get_status()
+        
+        # DM servisine özel durumlar
+        rate_limiter_status = {}
+        if hasattr(self, 'rate_limiter') and hasattr(self.rate_limiter, 'get_status'):
+            rate_limiter_status = self.rate_limiter.get_status()
+            
+        status.update({
+            'processed_dms': self.processed_dms,
+            'invites_sent': self.invites_sent,
+            'last_activity': self.last_activity.strftime("%Y-%m-%d %H:%M:%S"),
+            'rate_limiter': rate_limiter_status,
+            'recent_users_count': len(self.responded_users),
+            'cooldown_minutes': getattr(self, 'invite_cooldown_minutes', 5),
+            'tdlib_available': getattr(self, 'have_tdlib', False)
+        })
+        return status
+    
+    async def get_statistics(self) -> Dict[str, Any]:
+        """
+        Servis istatistiklerini döndürür.
+        
+        Returns:
+            Dict: Servis istatistikleri
+        """
+        return {
+            'total_sent': self.invites_sent,
+            'responded_users': len(self.responded_users),
+            'groups_count': len(self.group_links),
+            'super_users_count': len(getattr(self, 'super_users', []))
+        }
+    
+    def set_services(self, services):
+        """
+        Diğer servislere referansları ayarlar.
         
         Args:
-            user: Kullanıcı bilgileri sözlüğü
-            
-        Returns:
-            bool: İşlem başarılı ise True
+            services: Servis adı -> Servis nesnesi eşleşmesi
         """
-        try:
-            # User bir dict olarak beklenir
-            if not isinstance(user, dict):
-                logger.warning(f"Beklenmeyen kullanıcı veri tipi: {type(user)}")
-                return False
-                
-            # Gerekli alanları kontrol et
-            if "user_id" not in user:
-                logger.warning(f"Geçersiz kullanıcı verisi, user_id eksik: {user}")
-                return False
-                
-            user_id = user["user_id"]
-            first_name = user.get("first_name", "Kullanıcı")
-            username = user.get("username", "")
-            
-            # Bu oturumda zaten yanıt verilmiş mi kontrol et
-            if user_id in self.responded_users:
-                logger.debug(f"Bu kullanıcıya ({user_id}) daha önce yanıt verildi, geçiliyor")
-                return False
-            
-            # Veritabanında yakın zamanda davet edilmiş mi kontrol et
-            if self._was_recently_invited(user_id):
-                logger.debug(f"Bu kullanıcı ({user_id}) yakın zamanda davet edilmiş, atlanıyor")
-                return False
+        self.services = services
+        logger.debug(f"{self.name} servisi diğer servislere bağlandı")
 
-            # User entity kontrolü
-            user_entity = await self._get_user_entity(user_id, username)
-            if not user_entity:
-                logger.debug(f"Kullanıcı varlığı alınamadı: {user_id}")
-                return False
+    async def send_promotional_message(self, message_template, user_limit=50, cooldown_hours=48):
+        """Veritabanındaki kullanıcılara tanıtım mesajı gönderir"""
+        # Son gönderimden bu yana cooldown geçti mi kontrol et
+        last_promo = await self._run_async_db_method(self.db.get_setting, 'last_promo_time')
+        if last_promo:
+            last_time = datetime.fromisoformat(last_promo)
+            if datetime.now() - last_time < timedelta(hours=cooldown_hours):
+                logger.info(f"Tanıtım mesajı cooldown süresi dolmadı: {cooldown_hours} saat")
+                return 0
+        
+        # Aktif kullanıcıları al
+        users = await self._run_async_db_method(
+            self.db.get_active_users_for_promo,
+            user_limit
+        )
+        
+        if not users:
+            logger.info("Tanıtım için uygun kullanıcı bulunamadı")
+            return 0
+        
+        sent_count = 0
+        for user in users:
+            # Rate limiting için aralık bırak
+            await asyncio.sleep(self.rate_limiter.get_wait_time() + 1)
+            
+            # Mesajı gönder
+            success = await self._send_promo_to_user(user, message_template)
+            if success:
+                sent_count += 1
                 
-            # Flirty mesaj gönder
-            flirty_message = self._choose_flirty_message()
-            await self.client.send_message(user_entity, flirty_message)
+            # Rate limiter'ı güncelle
             self.rate_limiter.mark_used()
             
-            # Kısa bekle
-            await asyncio.sleep(random.uniform(8, 15))
-            
-            # Davet mesajını oluştur ve gönder
-            invite_message = self._choose_invite_template()
-            formatted_links = self._get_formatted_group_links()
-            group_links_str = "\n\nGruplarımız:\n" + "\n".join([f"• {link}" for link in formatted_links]) if formatted_links else ""
-            super_users_str = ""
+        # Son gönderim zamanını kaydet
+        await self._run_async_db_method(self.db.set_setting, 'last_promo_time', 
+                                       datetime.now().isoformat())
         
+        logger.info(f"Tanıtım mesajı gönderimi tamamlandı: {sent_count}/{len(users)}")
+        return sent_count
+
+    async def _update_user_interaction_profile(self, user_id, message_text):
+        """
+        Kullanıcı etkileşim profilini günceller
+        """
+        try:
+            if hasattr(self.db, 'update_user_interaction'):
+                # BURADA DÜZELTME YAPILDI: await kullanıldığından emin olma
+                await self._run_async_db_method(
+                    self.db.update_user_interaction,
+                    user_id,
+                    datetime.now(),
+                    len(message_text) if message_text else 0
+                )
+        except Exception as e:
+            logger.error(f"Kullanıcı etkileşim profili güncelleme hatası: {str(e)}")
+
+    async def _send_personalized_message(self, event, user_id):
+        """
+        Kullanıcıya özel mesaj gönderir
+        """
+        try:
+            # Kişiselleştirilmiş mesaj oluştur
+            message = self.user_profiler.get_personalized_message(user_id, 'greeting')
             
-            # Davet mesajını oluştur ve gönder
-            invite_message = self._choose_invite_template()
-            formatted_links = self._get_formatted_group_links()
-            group_links_str = "\n\nGruplarımız:\n" + "\n".join([f"• {link}" for link in formatted_links]) if formatted_links else ""
-            super_users_str = ""
-            
-            if self.super_users:
-                valid_super_users = [f"• @{su}" for su in self.super_users if su]
-                if valid_super_users:
-                    super_users_str = "\n\nADMIN onaylı arkadaşlarıma menü için yazabilirsin:\n" + "\n".join(valid_super_users)
-                    
-            full_message = f"{invite_message}{group_links_str}{super_users_str}"
-            await self.client.send_message(user_entity, full_message)
-            self.rate_limiter.mark_used()
-            
-            # Veritabanını güncelle ve istatistikleri tut
-            if hasattr(self.db, 'mark_user_invited'):
-                self.db.mark_user_invited(user_id)
-                
-            self.responded_users.add(user_id)
-            self.invites_sent += 1
-            logger.info(f"✅ Tekli işlemde davet gönderildi: {username or user_id}")
+            # Mesajı gönder
+            await event.reply(message)
             
             return True
-            
-        except errors.FloodWaitError as e:
-            logger.warning(f"FloodWaitError (_process_user): {e.seconds} saniye bekleniyor")
-            self.rate_limiter.register_error(e)
-            await asyncio.sleep(e.seconds + 1)
+        except Exception as e:
+            logger.error(f"Kişiselleştirilmiş mesaj gönderilirken hata: {str(e)}")
             return False
-        except Exception as e:
-            logger.error(f"Kullanıcı işleme hatası ({user.get('user_id')}): {str(e)}", exc_info=True)
-            return False
-    
-    #
-    # GRUP KEŞFETME VE ÜYE TOPLAMA
-    #
-    
-    async def collect_group_members(self) -> int:
-        """
-        Kullanıcının tüm gruplarını keşfeder ve üyeleri veritabanına kaydeder.
-        
-        Returns:
-            int: Veritabanına kaydedilen toplam üye sayısı
-        """
-        print(f"{Fore.CYAN}╔══════════════════════════════════════════════════╗{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}║               GRUP ÜYELERİ TOPLAMA               ║{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}╚══════════════════════════════════════════════════╝{Style.RESET_ALL}")
-        
-        logger.info("🔍 Kullanıcının katıldığı gruplar keşfediliyor...")
-        
+
+    async def get_safe_entity(self, user_id, username=None):
+        """Kullanıcı entity'sini güvenli şekilde almaya çalışır."""
         try:
-            # Tüm konuşmaları getir
-            dialogs = await self.client.get_dialogs(limit=None) 
-            
-            # Admin gruplarını çıkar
-            admin_groups = self._get_admin_group_ids()
-            
-            # Grupları keşfet ve kaydet
-            discovered_groups = await self._discover_groups(dialogs, admin_groups)
-            
-            # Hedef grupları al
-            target_groups = await self._get_target_groups(discovered_groups)
-            
-            # Üyeleri topla
-            total_members_added = await self._collect_members_from_groups(target_groups)
-            
-            # Özet bilgileri göster
-            self._display_collection_summary(total_members_added, len(target_groups))
-            
-            return total_members_added
+            # Önce user_service'i kullanarak dene
+            if 'user' in self.services and hasattr(self.services['user'], 'get_safe_entity'):
+                entity = await self.services['user'].get_safe_entity(user_id, username)
+                if entity:
+                    return entity
+                    
+            # User service yoksa veya çalışmazsa, kendi yöntemini dene
+            try:
+                return await self.client.get_entity(user_id)
+            except ValueError:
+                if username:
+                    try:
+                        return await self.client.get_entity(f"@{username}")
+                    except:
+                        pass
+            return None
             
         except Exception as e:
-            logger.error(f"Üye toplama genel hatası: {str(e)}", exc_info=True)
-            print(f"{Fore.RED}✗✗✗ Üye toplama sürecinde kritik hata: {str(e)}{Style.RESET_ALL}")
-            return 0
-    
-    def _get_admin_group_ids(self) -> Set[int]:
-        """
-        Admin grup ID'lerini çevre değişkenlerinden alır.
-        
-        Returns:
-            Set[int]: Admin grup ID'leri
-        """
-        admin_groups_raw = os.environ.get("ADMIN_GROUPS", "")
-        admin_group_ids = set()
-        
-        if admin_groups_raw:
-            for g in admin_groups_raw.split(','):
-                g_strip = g.strip()
-                if g_strip and g_strip.startswith('-100'):
-                    try:
-                        admin_group_ids.add(int(g_strip))
-                    except ValueError:
-                        logger.warning(f"Geçersiz admin grup ID formatı: {g_strip}")
-        
-        return admin_group_ids
-    
-    async def _discover_groups(self, dialogs, admin_group_ids) -> List[Dict[str, Any]]:
-        """
-        Kullanıcının katıldığı grupları keşfeder ve veritabanına kaydeder.
-        
-        Args:
-            dialogs: Kullanıcının tüm konuşmaları
-            admin_group_ids: Admin grup ID'leri
-            
-        Returns:
-            List[Dict[str, Any]]: Keşfedilen gruplar
-        """
-        # Metodun geri kalanı değişmedi...
-    
-    async def _get_target_groups(self, discovered_groups) -> List[Tuple[int, str]]:
-        """
-        Veritabanından veya yapılandırmadan hedef grup listesini çeker.
-        
-        Args:
-            discovered_groups: Keşfedilen gruplar
-            
-        Returns:
-            List[Tuple[int, str]]: Hedef gruplar
-        """
-        target_groups = []
-        try:
-            # Try database first
-            if hasattr(self.db, 'get_all_target_groups'):
-                target_groups_data = None
-                try:
-                    if asyncio.iscoroutinefunction(self.db.get_all_target_groups):
-                        target_groups_data = await self.db.get_all_target_groups()
-                    else:
-                        target_groups_data = self.db.get_all_target_groups()
-                    
-                    if target_groups_data:
-                        target_groups = [(g['group_id'], g.get('title', g.get('name', f"Grup {g['group_id']}"))) 
-                                         for g in target_groups_data if 'group_id' in g]
-                        if target_groups:
-                             logger.debug(f"Veritabanından {len(target_groups)} hedef grup alındı.")
-                             return target_groups
-                except Exception as db_err:
-                     logger.error(f"Veritabanından hedef grup alınırken hata: {db_err}")
+            logger.error(f"Entity güvenli alma hatası: {str(e)}")
+            return None
 
-            # Fallback to environment variable or config
-            target_groups_set = set()
-            env_targets = os.environ.get("TARGET_GROUPS", "")
-            if env_targets:
-                for g in env_targets.split(','):
-                    if g and g.strip():
-                        target_groups_set.add(g.strip())
-            
-            if not target_groups_set:
-                 config_targets = self.config.get_setting('target_groups', [])
-                 if config_targets:
-                     for g in config_targets:
-                         if g and isinstance(g, str) and g.strip():
-                             target_groups_set.add(g.strip())
-                
-            raw_groups = list(target_groups_set)
-            
-            if raw_groups:
-                 logger.debug(f"Yapılandırma/Çevre değişkenlerinden {len(raw_groups)} hedef grup alındı.")
-                 resolved_groups = []
-                 for group_ref in raw_groups:
-                      try:
-                           entity = await self.client.get_entity(group_ref) 
-                           resolved_groups.append((entity.id, getattr(entity, 'title', f"Grup {entity.id}")))
-                      except ValueError:
-                           logger.warning(f"Hedef grup referansı çözümlenemedi: {group_ref}")
-                      except Exception as e:
-                           logger.error(f"Hedef grup alınırken hata ({group_ref}): {e}")
-                 return resolved_groups
-            
-        except Exception as e:
-            logger.error(f"Hedef grupları alırken genel hata: {str(e)}", exc_info=True)
-
-        logger.warning("Hedef grup bulunamadı.")
-        return []
-
-    async def _collect_members_from_groups(self, target_groups) -> int:
-        """
-        Hedef gruplardan üyeleri toplar ve veritabanına kaydeder.
-        
-        Args:
-            target_groups: Hedef gruplar
-            
-        Returns:
-            int: Toplam eklenen üye sayısı
-        """
-        total_members_added = 0
-        successful_groups = 0
-        group_count = len(target_groups)
-        if group_count == 0:
-            logger.warning("Hedef grup bulunamadı, üye toplama işlemi yapılamıyor.")
-            return 0
-
-        print(f"\n{Fore.CYAN}[ÜYE TOPLAMA İLERLEMESİ]{Style.RESET_ALL}")
-        
-        for idx, (group_id, group_name) in enumerate(target_groups):
-            if self.stop_event.is_set():
-                logger.info("Üye toplama durduruldu.")
-                break
-
+    async def run(self):
+        """DM servisi için ana döngü."""
+        logger.info("DM servisi çalışıyor...")
+        while self.running and not self.stop_event.is_set():
             try:
-                group = None
-                group_title = group_name 
-                try:
-                    group = await self.client.get_entity(group_id)
-                    group_title = getattr(group, 'title', group_name) 
-                    print(f"\n{Fore.CYAN}Processing Group: {group_title} ({group_id}){Style.RESET_ALL}")
-                except ValueError:
-                    print(f"{Fore.RED}✗ Grup ID'si geçersiz: {group_id}{Style.RESET_ALL}")
-                    continue
-                except errors.ChannelPrivateError:
-                    print(f"{Fore.RED}✗ Özel kanal/grup, üyeler alınamıyor: {group_name} ({group_id}){Style.RESET_ALL}")
-                    continue
-                except Exception as e:
-                    print(f"{Fore.RED}✗ Grup alınamadı: {group_name} ({group_id}) - {e}{Style.RESET_ALL}")
-                    continue
-                
-                progress = int((idx + 1) / group_count * 30)
-                print(f"\r{Fore.CYAN}[{'█' * progress}{' ' * (30-progress)}] {((idx+1)/group_count*100):.1f}% ({idx+1}/{group_count}) - {group_title[:20]}{Style.RESET_ALL}", end="")
-                
-                if hasattr(self.db, 'update_group_stats'):
-                    try:
-                        if asyncio.iscoroutinefunction(self.db.update_group_stats):
-                            await self.db.update_group_stats(group.id, group_title)
-                        else:
-                            self.db.update_group_stats(group.id, group_title)
-                    except Exception as db_err:
-                        logger.error(f"Grup istatistikleri güncellenirken hata ({group_title}): {db_err}")
-
-                
-                members_in_group = 0
-                try:
-                    async for member in self.client.iter_participants(group, limit=None): 
-                        if self.stop_event.is_set(): break 
-
-                        if member.bot or member.deleted:
-                            continue  
-                            
-                        if hasattr(self.db, 'add_or_update_user'):
-                            user_data = {
-                                'user_id': member.id,
-                                'username': member.username,
-                                'first_name': member.first_name,
-                                'last_name': member.last_name,
-                                'source_group': group_title 
-                            }
-                            try:
-                                if asyncio.iscoroutinefunction(self.db.add_or_update_user):
-                                    await self.db.add_or_update_user(user_data)
-                                else:
-                                    self.db.add_or_update_user(user_data)
-                                total_members_added += 1
-                                members_in_group += 1
-                            except Exception as db_err:
-                                logger.error(f"Kullanıcı veritabanına eklenirken/güncellenirken hata ({member.id}): {db_err}")
-
-                        
-                        # Optional: Add a small sleep within the inner loop for very large groups
-                        # await asyncio.sleep(0.01) 
-
-                    if not self.stop_event.is_set():
-                        print(f" - {members_in_group} üye işlendi.")
-                        successful_groups += 1
-                    
-                except errors.FloodWaitError as e:
-                    wait_time = e.seconds
-                    logger.warning(f"⏳ FloodWaitError (get_participants): {wait_time} saniye bekleniyor - Grup: {group_title}")
-                    print(f"\n{Fore.RED}⚠️ Hız sınırı (üye çekerken) - {wait_time} saniye bekleniyor{Style.RESET_ALL}")
-                    await asyncio.sleep(wait_time + 1)
-                    continue 
-                    
-                except errors.ChatAdminRequiredError:
-                    print(f"\n{Fore.RED}✗ Yönetici yetkisi gerekli: {group_title}{Style.RESET_ALL}")
-                    continue
-                except errors.ChannelPrivateError:
-                    print(f"\n{Fore.RED}✗ Özel kanal/grup, üyeler alınamıyor: {group_title}{Style.RESET_ALL}")
-                    continue
-                except Exception as e:
-                    logger.error(f"Grup üyelerini getirme hatası: {group_title} - {str(e)}", exc_info=True)
-                    print(f"\n{Fore.RED}✗ Üye toplama hatası: {group_title} - {str(e)}{Style.RESET_ALL}")
-                
-                group_wait = random.uniform(5, 15) 
-                logger.debug(f"Gruplar arası {group_wait:.1f}s bekleniyor...")
-                await asyncio.sleep(group_wait)
-                
-            except Exception as e:
-                logger.error(f"Grup işleme genel hatası: {group_id} - {str(e)}", exc_info=True)
-                print(f"\n{Fore.RED}✗ Genel hata: {group_id} - {str(e)}{Style.RESET_ALL}")
-                await asyncio.sleep(random.uniform(2, 5)) 
-                continue
-        
-        return total_members_added
-
-    def _display_collection_summary(self, total_members_added, group_count):
-        """
-        Üye toplama işlemi sonrası özet bilgileri gösterir.
-        
-        Args:
-            total_members_added: Toplam eklenen üye sayısı
-            group_count: Toplam grup sayısı
-        """
-        print() 
-        print(f"\n{Fore.CYAN}╔══════════════════════════════════════════════════╗{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}║                   TOPLAMA ÖZETI                  ║{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}╠══════════════════════════════════════════════════╣{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}║ Taranan Gruplar: {group_count:<3}                         ║{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}║ Toplanan Üyeler: {total_members_added:<6}                         ║{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}╚══════════════════════════════════════════════════╝{Style.RESET_ALL}")
-        
-        logger.info(f"📊 Toplam {total_members_added} üye veritabanına eklendi/güncellendi")
-    
-    async def auto_discover_groups(self):
-        """Kullanıcının katıldığı grupları periyodik olarak keşfeder"""
-        logger.info("Otomatik grup keşfi başlatılıyor...")
-        
-        while not self.stop_event.is_set():
-            try:
-                if not self.running:
-                     await asyncio.sleep(60)
-                     continue
-
-                logger.info("Otomatik grup keşfi çalışıyor...")
-                dialogs = await self.client.get_dialogs(limit=None)
-                
-                admin_groups_raw = os.environ.get("ADMIN_GROUPS", "")
-                admin_group_ids = set()
-                
-                if admin_groups_raw:
-                    for g in admin_groups_raw.split(','):
-                        g_strip = g.strip()
-                        if g_strip and g_strip.startswith('-100'):
-                            try:
-                                admin_group_ids.add(int(g_strip))
-                            except ValueError:
-                                logger.warning(f"Geçersiz admin grup ID formatı (otomatik keşif): {g_strip}")
-                
-                discovered_count = 0
-                updated_count = 0
-                
-                for dialog in dialogs:
-                    if self.stop_event.is_set(): break
-
-                    if (dialog.is_group or dialog.is_channel) and dialog.id not in admin_group_ids:
-                        entity = dialog.entity
-                        participants_count = getattr(entity, 'participants_count', 0) if entity else 0
-                        
-                        if hasattr(self.db, 'add_discovered_group'):
-                             try:
-                                 if asyncio.iscoroutinefunction(self.db.add_discovered_group):
-                                     added = await self.db.add_discovered_group(dialog.id, dialog.title, participants_count)
-                                 else:
-                                      added = self.db.add_discovered_group(dialog.id, dialog.title, participants_count)
-                                 if added == "added":
-                                      discovered_count += 1
-                                 elif added == "updated":
-                                      updated_count += 1
-                             except Exception as db_err:
-                                  logger.error(f"Grup veritabanına eklenirken/güncellenirken hata ({dialog.title}): {db_err}")
-
-                log_message = "Otomatik keşif tamamlandı."
-                if discovered_count > 0:
-                    log_message += f" {discovered_count} yeni grup eklendi."
-                if updated_count > 0:
-                     log_message += f" {updated_count} grup güncellendi."
-                if discovered_count == 0 and updated_count == 0:
-                     log_message += " Yeni/güncellenen grup bulunmadı."
-                logger.info(log_message)
-                
-                wait_duration = self.config.get_setting('group_discovery_interval_hours', 6) * 3600
-                logger.debug(f"Sonraki otomatik keşif {wait_duration/3600:.1f} saat sonra.")
-                await asyncio.sleep(wait_duration)
-                
+                # Periyodik işlemler burada yapılabilir
+                await asyncio.sleep(1)  # CPU kullanımını azaltmak için
             except asyncio.CancelledError:
-                 logger.info("Otomatik grup keşfi görevi iptal edildi.")
-                 break
+                logger.info("DM servis döngüsü iptal edildi")
+                break
             except Exception as e:
-                logger.error(f"Otomatik grup keşfi hatası: {str(e)}", exc_info=True)
-                await asyncio.sleep(30 * 60) # Wait 30 mins after error
+                logger.error(f"DM servisi çalışırken hata: {str(e)}")
+        
+        logger.info("DM servis döngüsü sonlandı")
+
+    async def get_invite_count(self, period="day"):
+        """
+        Belirli bir zaman diliminde gönderilen davet sayısını getirir.
+        
+        Args:
+            period: Zaman dilimi ('day', 'week', 'month', 'all')
+            
+        Returns:
+            int: Davet sayısı
+        """
+        try:
+            count = 0
+            now = datetime.now()
+            
+            # Veritabanından almaya çalış
+            if hasattr(self.db, 'get_invite_count'):
+                try:
+                    count = await self._run_async_db_method(self.db.get_invite_count, period)
+                    return count
+                except Exception as e:
+                    logger.error(f"Veritabanından davet sayısı alınamadı: {str(e)}")
+            
+            # Memory istatistiklerinden hesapla
+            if hasattr(self, 'invite_stats'):
+                if period == "day":
+                    return self.invite_stats.get('daily_sent', 0)
+                elif period == "all":
+                    return self.invite_stats.get('total_sent', 0)
+                    
+            # Fallback - servislerden sorgula
+            if hasattr(self, 'services') and 'invite' in self.services:
+                invite_stats = await self.services['invite'].get_statistics()
+                if period == "day":
+                    return invite_stats.get('daily_sent', 0)
+                elif period == "all":
+                    return invite_stats.get('total_sent', 0)
+                    
+            return count
+        except Exception as e:
+            logger.error(f"Davet sayısı alma hatası: {str(e)}")
+            return 0
+
+    # TDLib yardımcı fonksiyonları
+    async def tdlib_get_chats(self, limit=100):
+        """TDLib ile mevcut sohbetleri alır"""
+        if not self.use_tdlib:
+            return []
+            
+        try:
+            self.tdlib_send({
+                '@type': 'getChats',
+                'limit': limit
+            })
+            
+            # Yanıtı bekle
+            start_time = time.time()
+            timeout = 5.0
+            
+            while time.time() - start_time < timeout:
+                result = self.tdlib_receive(0.1)
+                if not result:
+                    await asyncio.sleep(0.1)
+                    continue
+                    
+                if result.get('@type') == 'chats':
+                    chat_ids = result.get('chat_ids', [])
+                    chats = []
+                    
+                    for chat_id in chat_ids:
+                        chat_info = await self.tdlib_get_chat_info(chat_id)
+                        if chat_info:
+                            chats.append(chat_info)
+                            
+                    return chats
+                    
+            return []
+            
+        except Exception as e:
+            logger.error(f"TDLib sohbetleri alırken hata: {str(e)}")
+            return []
+
+    async def tdlib_get_chat_info(self, chat_id):
+        """TDLib ile sohbet bilgilerini alır"""
+        if not self.use_tdlib:
+            return None
+            
+        try:
+            self.tdlib_send({
+                '@type': 'getChat',
+                'chat_id': chat_id
+            })
+            
+            # Yanıtı bekle
+            start_time = time.time()
+            timeout = 5.0
+            
+            while time.time() - start_time < timeout:
+                result = self.tdlib_receive(0.1)
+                if not result:
+                    await asyncio.sleep(0.1)
+                    continue
+                    
+                if result.get('@type') == 'chat':
+                    return {
+                        'id': result.get('id'),
+                        'type': result.get('type', {}).get('@type'),
+                        'title': result.get('title'),
+                        'is_group': result.get('type', {}).get('@type') in ('chatTypeSupergroup', 'chatTypeBasicGroup'),
+                        'member_count': result.get('member_count', 0)
+                    }
+                    
+            return None
+            
+        except Exception as e:
+            logger.error(f"TDLib sohbet bilgilerini alırken hata: {str(e)}")
+            return None
+
+    async def tdlib_send_message(self, chat_id, text):
+        """TDLib ile mesaj gönderir"""
+        if not self.use_tdlib:
+            return False
+            
+        try:
+            self.tdlib_send({
+                '@type': 'sendMessage',
+                'chat_id': chat_id,
+                'input_message_content': {
+                    '@type': 'inputMessageText',
+                    'text': {
+                        '@type': 'formattedText',
+                        'text': text
+                    }
+                }
+            })
+            
+            # Başarıdan emin olmak için bir sonuç beklemek daha doğru olur
+            # ama basitlik için sadece gönderimi işaretliyoruz
+            return True
+            
+        except Exception as e:
+            logger.error(f"TDLib mesaj gönderirken hata: {str(e)}")
+            return False
+
+    async def test_templates(self):
+        """Şablonların doğru yüklendiğini kontrol eder"""
+        logger.info("=== ŞABLON DURUMU ===")
+        logger.info(f"- Davet şablonları: {len(getattr(self, 'invite_templates', []))}")
+        logger.info(f"- Yönlendirme şablonları: {len(getattr(self, 'redirect_templates', []))}")
+        logger.info(f"- Flirty şablonları: {len(getattr(self, 'flirty_templates', []))}")
+        logger.info(f"- Grup mesaj şablonları: {len(getattr(self, 'group_message_templates', []))}")
+        
+        # Örnek şablonlar
+        if self.invite_templates:
+            logger.info(f"Davet örneği: {self.invite_templates[0]}")
+        if self.redirect_templates:
+            logger.info(f"Yönlendirme örneği: {self.redirect_templates[0]}")
+        if hasattr(self, 'flirty_templates') and self.flirty_templates:
+            logger.info(f"Flirty örneği: {self.flirty_templates[0]}")
+        
+        return True
 
 # Alias tanımlaması
 DMService = DirectMessageService

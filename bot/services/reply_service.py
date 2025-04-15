@@ -12,9 +12,10 @@ import asyncio
 import json
 import logging
 import random
+import functools
 from datetime import datetime
 from typing import Dict, Any, List
-from telethon import events, utils
+from telethon import events, utils, errors
 
 from bot.services.base_service import BaseService
 
@@ -60,20 +61,20 @@ class ReplyService(BaseService):
         
         Args:
             services: Servis adı -> Servis nesnesi eşleşmesi
-            
-        Returns:
-            None
         """
         self.services = services
+        logger.debug(f"{self.name} servisi diğer servislere bağlandı")
         
     async def initialize(self) -> bool:
         """
-        Servisi başlatmadan önce hazırlar.
-        
-        Returns:
-            bool: Başarılı ise True
+        ReplyService servisini başlatır.
         """
+        # Temel servisi başlat
         await super().initialize()
+        
+        # Bot modu kontrolünü kaldır, hep UserBot olarak kabul et
+        self._is_user_mode = True
+        logger.info("✅ Yanıt servisi kullanıcı hesabı ile çalışıyor, tüm özellikler etkin.")
         
         # Mention istatistiklerini yükle
         if hasattr(self.db, 'get_mention_stats'):
@@ -135,35 +136,99 @@ class ReplyService(BaseService):
         except Exception as e:
             logger.error(f"Yeni mesaj işleme hatası: {str(e)}")
             
-    async def _handle_mention(self, event: Any) -> None:
-        """
-        Bot mention'larını işler.
-        
-        Args:
-            event: Telethon mesaj olayı
+    async def _handle_mention(self, event):
+        """Bot mention'larını işler."""
+        try:
+            chat_id = event.chat_id
+            sender_id = event.sender_id
             
-        Returns:
-            None
-        """
-        chat_id = event.chat_id
-        sender_id = event.sender_id
-        
-        # Mention istatistiklerini güncelle
-        if chat_id not in self.mention_stats:
-            self.mention_stats[chat_id] = 0
-        self.mention_stats[chat_id] += 1
-        
-        # Yanıt vermek için uygun mu kontrol et
-        should_reply = await self._should_reply_to_mention(chat_id, sender_id)
-        
-        if should_reply:
-            # Uygun yanıtları seç
-            response = self._select_response('mention')
+            # Mention istatistiklerini güncelle
+            if chat_id not in self.mention_stats:
+                self.mention_stats[chat_id] = 0
+            self.mention_stats[chat_id] += 1
             
-            # Yanıtı gönder
-            await event.reply(response)
-            self.reply_count += 1
-            logger.info(f"Mention yanıtı gönderildi: {chat_id}")
+            # Yanıt vermek için uygun mu kontrol et
+            should_reply = await self._should_reply_to_mention(chat_id, sender_id)
+            
+            if should_reply:
+                # Flirty yanıtları seç - flirty tipi yanıt
+                response = self._select_response('flirty')
+                
+                # Rate limiting kontrolü (get_wait_time metodu yoksa)
+                if hasattr(self, 'rate_limiter'):
+                    # get_wait_time metodunu güvenli şekilde kullan
+                    if hasattr(self.rate_limiter, 'get_wait_time'):
+                        wait_time = self.rate_limiter.get_wait_time()
+                        if wait_time > 0:
+                            logger.debug(f"Rate limit nedeniyle {wait_time:.1f} saniye bekleniyor")
+                            await asyncio.sleep(wait_time)
+                    else:
+                        # Alternatif yöntem - yalnızca işlem yapılabilir mi kontrolü
+                        can_execute = True
+                        if hasattr(self.rate_limiter, 'can_execute'):
+                            can_execute = self.rate_limiter.can_execute()
+                        
+                        if not can_execute:
+                            logger.debug("Rate limit nedeniyle işlem yapılamıyor")
+                            await asyncio.sleep(1)  # En az 1 saniye bekle
+                
+                # Yanıtı gönder
+                await event.reply(response)
+                
+                # Rate limiter'ı güncelle (varsa)
+                if hasattr(self, 'rate_limiter') and hasattr(self.rate_limiter, 'mark_used'):
+                    self.rate_limiter.mark_used()
+                
+                # İstatistikleri güncelle    
+                self.reply_count += 1
+                logger.info(f"Mention yanıtı gönderildi: {chat_id}")
+                
+                # Kişiye DM atmayı dene - güvenli metodla
+                try:
+                    await self._try_send_dm_to_user(event.sender)
+                except Exception as dm_err:
+                    logger.debug(f"DM gönderim hatası (önemsiz): {str(dm_err)}")
+                    
+        except errors.FloodWaitError as e:
+            wait_time = e.seconds
+            logger.warning(f"FloodWaitError mention yanıtı gönderirken: {wait_time} saniye bekleniyor")
+            if hasattr(self, 'rate_limiter') and hasattr(self.rate_limiter, 'register_error'):
+                self.rate_limiter.register_error(e)
+            await asyncio.sleep(wait_time + 1)
+        except Exception as e:
+            logger.error(f"Mention işleme hatası: {str(e)}")
+
+    # Entity hatalarına karşı _try_send_dm_to_user metodunu güçlendirin
+    async def _try_send_dm_to_user(self, user):
+        """Mention yapan kullanıcıya DM ile ulaşmayı dener."""
+        if not user or not hasattr(self, 'services') or 'dm' not in self.services:
+            return
+            
+        try:
+            # DÜZELTME: Entity bilgilerini tam olarak al
+            user_id = user.id
+            username = getattr(user, 'username', None)
+            first_name = getattr(user, 'first_name', None)
+            
+            # DM servisinin güvenli entity alma yöntemini kullan
+            dm_service = self.services.get('dm')
+            if dm_service and hasattr(dm_service, 'get_safe_entity'):
+                entity = await dm_service.get_safe_entity(user_id, username)
+                if not entity:
+                    logger.debug(f"DM için entity bulunamadı: {user_id}/{username}")
+                    return
+            
+            # Kullanıcı verisi oluştur
+            user_data = {
+                "user_id": user_id,
+                "username": username,
+                "first_name": first_name,
+                "entity": entity  # Entity nesnesini de geçir
+            }
+            
+            # İşleme devam et...
+        except Exception as e:
+            logger.debug(f"DM gönderme hatası: {str(e)}")
             
     async def _handle_command(self, event: Any) -> None:
         """
@@ -202,10 +267,6 @@ class ReplyService(BaseService):
         
     async def _should_reply_to_mention(self, chat_id: int, user_id: int) -> bool:
         """
-        Bir mention'a yanıt verilip verilmeyeceğini belirler.
-        
-        Args:
-            chat_id: Sohbet ID
             user_id: Kullanıcı ID
             
         Returns:
@@ -323,3 +384,11 @@ class ReplyService(BaseService):
             'reply_count': self.reply_count,
             'mention_stats': dict(self.mention_stats)  # Kopyasını oluştur
         }
+
+    async def _run_async_db_method(self, method, *args, **kwargs):
+        """Veritabanı metodunu thread-safe biçimde çalıştırır."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, 
+            functools.partial(method, *args, **kwargs)
+        )

@@ -11,6 +11,7 @@
 # Config sınıfını doğrudan dışa aktarır
 from .settings import Config
 from .config import get_default_config
+from config.config import Config, get_default_config
 
 # __all__ tanımlayarak import * kullanıldığında
 # sadece bu belirtilen öğeler içe aktarılır

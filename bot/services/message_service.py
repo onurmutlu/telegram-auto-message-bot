@@ -12,32 +12,55 @@
 # ============================================================================ #
 """
 import logging
+import asyncio
+import functools
+from typing import Dict, Any
 from bot.handlers.group_handler import GroupHandler
+from bot.services.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
-class MessageService(GroupHandler):
+class MessageService(BaseService):
     """
     Telegram gruplarına mesaj gönderimi için servis sınıfı.
-    Bu sınıf, GroupHandler sınıfını genişleterek mesaj gönderme işlevselliğini sağlar.
+    Bu sınıf, GroupHandler sınıfını kullanarak mesaj gönderme işlevselliğini sağlar.
     """
     
     def __init__(self, client, config, db, stop_event=None):
-        super().__init__(client, config, db, stop_event)
-        logger.info("MessageService başlatıldı (GroupHandler wrapper)")
+        super().__init__("message", client, config, db, stop_event)
+        self.group_handler = GroupHandler(client, config, db)
+        logger.info("MessageService başlatıldı")
     
     async def run(self):
         """Ana servis döngüsü"""
         logger.info("MessageService çalışıyor, grup mesajları gönderilecek")
         # Ana servis döngüsünü çalıştır
-        result = await self.process_group_messages()
+        result = await self.group_handler.process_group_messages()
         return result
         
-    def get_status(self):
+    async def get_status(self):
         """Servis durum bilgilerini döndürür"""
-        status = super().get_status() if hasattr(super(), "get_status") else {}
+        status = await super().get_status()
         status.update({
             "service_type": "message",
             "name": "Mesaj Servisi"
         })
         return status
+
+    def set_services(self, services: Dict[str, Any]) -> None:
+        """
+        Diğer servislere referansları ayarlar.
+        
+        Args:
+            services: Servis adı -> Servis nesnesi eşleşmesi
+        """
+        self.services = services
+        logger.debug(f"{self.name} servisi diğer servislere bağlandı")
+
+    async def _run_async_db_method(self, method, *args, **kwargs):
+        """Veritabanı metodunu thread-safe biçimde çalıştırır."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, 
+            functools.partial(method, *args, **kwargs)
+        )

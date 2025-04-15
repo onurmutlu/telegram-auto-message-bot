@@ -5,28 +5,63 @@ from colorama import Fore, Style
 from typing import List, Dict, Optional
 import os
 import logging
+import asyncio
+import time
 # Logger configuration
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 class Database:
     def __init__(self, db_path: str = 'data/users.db'):
-        """Veritabanı bağlantısını başlatır"""
+        """
+        Veritabanı sınıfını başlatır.
+        
+        Args:
+            db_path: Veritabanı dosya yolu
+        """
         self.db_path = db_path
-        self.conn = None
-        self.cursor = None
+        
+        # Dizin kontrolü
+        db_dir = os.path.dirname(db_path)
+        if not os.path.exists(db_dir):
+            try:
+                os.makedirs(db_dir, exist_ok=True)
+                logger.info(f"Veritabanı dizini oluşturuldu: {db_dir}")
+            except Exception as e:
+                logger.error(f"Dizin oluşturma hatası: {str(e)}")
+                raise RuntimeError(f"Veritabanı dizini oluşturulamadı: {str(e)}")
+        
+        # Bağlantı kurma
+        try:
+            self.conn = sqlite3.connect(db_path, timeout=30)
+            self.conn.row_factory = sqlite3.Row
+            self.cursor = self.conn.cursor()
+            
+            # SQLite optimizasyonları
+            self.cursor.execute("PRAGMA journal_mode=WAL")
+            self.cursor.execute("PRAGMA busy_timeout=10000")
+            
+            # Başarılı bağlantı testi
+            self.cursor.execute("SELECT 1")
+            logger.info(f"Veritabanı bağlantısı kuruldu: {db_path}")
+            
+            # Temel tabloları oluştur
+            self._create_tables()
+            
+        except Exception as e:
+            logger.error(f"Veritabanı bağlantı hatası: {str(e)}")
+            # KRITIK: Bağlantıyı None olarak ayarlama!
+            # self.conn = None  
+            # self.cursor = None
+            raise RuntimeError(f"Veritabanı bağlantısı kurulamadı: {str(e)}")
         
     async def init_db(self):
         """Veritabanını başlatır ve gerekli tabloları oluşturur"""
         try:
-            # Veritabanı dizinini oluştur
-            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-            
-            # Veritabanı bağlantısını aç
-            self.conn = sqlite3.connect(self.db_path)
-            self.cursor = self.conn.cursor()
-            
             # Tabloları oluştur
             self._create_tables()
+            
+            self.conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging modu
+            self.conn.execute("PRAGMA busy_timeout=5000")  # 5 saniye timeout
             
             print(f"{Fore.GREEN}Veritabanı başarıyla başlatıldı{Style.RESET_ALL}")
             
@@ -172,24 +207,39 @@ class Database:
             # Şu an için retry_time belirlenmemişse (permanent=True durumu)
             permanent_flag = 1 if permanent else 0
             
-            self.cursor.execute('''
-                UPDATE groups 
-                SET is_active = 0,
-                    error_count = error_count + 1,
-                    last_error = ?,
-                    retry_after = ?,
-                    permanent_error = ?,
-                    updated_at = ?
-                WHERE group_id = ?
-            ''', (error_message or "Bilinmeyen hata", retry_time_str, permanent_flag, datetime.now(), group_id))
-            self.conn.commit()
+            # Kilit sorununu çözmek için 3 kez deneme ekleyin
+            for attempt in range(3):
+                try:
+                    self.cursor.execute('''
+                        UPDATE groups 
+                        SET is_active = 0,
+                            error_count = error_count + 1,
+                            last_error = ?,
+                            retry_after = ?,
+                            permanent_error = ?,
+                            updated_at = ?
+                        WHERE group_id = ?
+                    ''', (error_message or "Bilinmeyen hata", retry_time_str, permanent_flag, datetime.now(), group_id))
+                    
+                    self.conn.commit()
+                    
+                    if permanent:
+                        logger.warning(f"Grup {group_id} kalıcı olarak devre dışı bırakıldı: {error_message}")
+                    else:
+                        logger.info(f"Grup {group_id} şu tarihe kadar devre dışı bırakıldı: {retry_time}")
+                    
+                    return True
+                    
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e) and attempt < 2:
+                        logger.warning(f"Veritabanı kilitli, {attempt+1}/3 deneme...")
+                        await asyncio.sleep(1)  # 1 saniye bekle ve tekrar dene
+                    else:
+                        raise
             
-            if permanent:
-                logger.warning(f"Grup {group_id} kalıcı olarak devre dışı bırakıldı: {error_message}")
-            else:
-                logger.info(f"Grup {group_id} şu tarihe kadar devre dışı bırakıldı: {retry_time}")
+            logger.error(f"Veritabanı kilidi nedeniyle grup {group_id} devre dışı bırakılamadı")
+            return False
             
-            return True
         except Exception as e:
             logger.error(f"Grup devre dışı bırakılırken hata: {str(e)}")
             return False
@@ -545,6 +595,117 @@ class Database:
         except Exception as e:
             logger.error(f"get_users_for_invite error: {str(e)}")
             return []
+
+    def execute_with_retry(self, query, params=None, max_retries=3):
+        """Kilitlenme durumlarında yeniden deneme mekanizması"""
+        for attempt in range(max_retries):
+            try:
+                self.cursor.execute(query, params or ())
+                self.conn.commit()
+                return True
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < max_retries-1:
+                    # Artan bekleme süresi ile tekrar dene
+                    time.sleep(0.5 * (attempt + 1))
+                    continue
+                else:
+                    # Son denemede veya farklı bir hata durumunda
+                    raise
+        return False
+
+def setup_profile_tables(db_path='data/users.db'):
+    """Profil tablolarını kurar."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    try:
+        # Kullanıcı profil tablosu
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            gender_guess TEXT,
+            gender_confidence REAL DEFAULT 0.0,
+            age_range TEXT,
+            demographic_group TEXT,
+            communication_style TEXT,
+            segment TEXT,
+            interests TEXT,
+            messages_analyzed INTEGER DEFAULT 0,
+            last_message_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        
+        # Kullanıcı mesajları tablosu
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            message_text TEXT,
+            chat_id INTEGER,
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            analyzed BOOLEAN DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+        ''')
+        
+        # Kullanıcı tercihleri tablosu
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id INTEGER PRIMARY KEY,
+            language TEXT DEFAULT 'tr',
+            theme TEXT DEFAULT 'default',
+            notification_enabled BOOLEAN DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+        ''')
+        
+        conn.commit()
+        print(f"{Fore.GREEN}Kullanıcı profil tabloları başarıyla oluşturuldu{Style.RESET_ALL}")
+        return True
+    except Exception as e:
+        print(f"{Fore.RED}Kullanıcı profil tabloları oluşturma hatası: {str(e)}{Style.RESET_ALL}")
+        return False
+    finally:
+        conn.close()
+
+def setup_group_tables(db_path='data/users.db'):
+    """Grup tablolarını kurar."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    try:
+        # Grup tablosu
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS groups (
+            group_id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            member_count INTEGER DEFAULT 0,
+            last_activity TIMESTAMP,
+            is_active INTEGER DEFAULT 1
+        )
+        ''')
+        
+        # İs_active sütunu mevcut değilse ekle
+        try:
+            cursor.execute("ALTER TABLE groups ADD COLUMN is_active INTEGER DEFAULT 1")
+        except sqlite3.OperationalError:
+            # Sütun zaten var, hata görmezden gelinebilir
+            pass
+            
+        conn.commit()
+        print("Grup tabloları başarıyla oluşturuldu")
+    except Exception as e:
+        print(f"Grup tabloları oluşturulurken hata: {str(e)}")
+    finally:
+        conn.close()
 
 def upgrade_database():
     """

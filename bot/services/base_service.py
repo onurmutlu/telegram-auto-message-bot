@@ -10,7 +10,8 @@
 
 import asyncio
 import logging
-from typing import Dict, Any, Optional
+import functools
+from typing import Dict, Any, Optional, Callable
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class BaseService:
             stop_event: Durdurma sinyali için asyncio.Event nesnesi
         """
         self.service_name = service_name
+        self.name = service_name  # Her iki özelliği de ayarlıyoruz - bu tutarsızlık sorununu çözecek
         self.client = client
         self.config = config
         self.db = db
@@ -55,13 +57,17 @@ class BaseService:
         
     async def initialize(self) -> bool:
         """
-        Servisi başlatmadan önce hazırlar.
-        
-        Returns:
-            bool: Başarılı ise True
+        Temel servisi başlatır.
         """
-        self.initialized = True
-        logger.info(f"{self.service_name} servisi başlatılıyor...")
+        # İstemcinin UserBot mu yoksa Bot mu olduğunu kontrol et (her zaman UserBot olarak ayarla)
+        self._is_user_mode = True
+        
+        # Oturum başlama zamanını kaydet
+        self.start_time = datetime.now()
+        
+        # Durum bilgisi
+        logger.info(f"{self.name} servisi başlatılıyor...")
+        
         return True
         
     async def start(self) -> bool:
@@ -123,24 +129,65 @@ class BaseService:
         """
         return {}
         
-    async def _run_async_db_method(self, method, *args, **kwargs) -> Any:
+    async def _run_async_db_method(self, method: Callable, *args, **kwargs) -> Any:
         """
-        Veritabanı metodlarını asenkron olarak çalıştırmak için yardımcı metod.
+        Veritabanı metodunu thread-safe biçimde çalıştırır.
         
         Args:
-            method: Çalıştırılacak metod
-            *args: Metoda geçirilecek pozisyonel argümanlar
-            **kwargs: Metoda geçirilecek anahtar kelime argümanları
+            method: Çalıştırılacak veritabanı metodu
+            *args: Metoda geçirilecek argümanlar
+            **kwargs: Metoda geçirilecek anahtar kelimeli argümanlar
             
         Returns:
-            Any: Metodun dönüş değeri
+            Any: Metodun döndürdüğü değer
         """
-        try:
-            if asyncio.iscoroutinefunction(method):
-                return await method(*args, **kwargs)
-            else:
-                # Asenkron olmayan metodları bir executor'da çalıştır
-                return await asyncio.to_thread(method, *args, **kwargs)
-        except Exception as e:
-            logger.error(f"DB işlemi hatası: {str(e)}")
-            return None
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, 
+            functools.partial(method, *args, **kwargs)
+        )
+
+    def set_services(self, services: Dict[str, Any]) -> None:
+        """
+        Diğer servislere referansları ayarlar.
+        
+        Args:
+            services: Servis adı -> Servis nesnesi eşleşmesi
+        """
+        self.services = services
+        logger.debug(f"{self.name} servisi diğer servislere bağlandı")
+        
+    def connect_services(self, services: Dict[str, Any]) -> None:
+        """
+        Diğer servislere referansları ayarlar (set_services ile aynı işlevi görür).
+        
+        Args:
+            services: Servis adı -> Servis nesnesi eşleşmesi
+        """
+        self.services = services
+        logger.debug(f"{self.name} servisi diğer servislere bağlandı")
+        
+    async def dispatch_event(self, event_name: str, data: Dict[str, Any]) -> None:
+        """Diğer servislere event gönderir."""
+        if not hasattr(self, 'services'):
+            logger.warning(f"{self.name}: Servisler bağlanmadan event gönderilmeye çalışıldı")
+            return
+            
+        for service_name, service in self.services.items():
+            if service_name != self.name and hasattr(service, 'handle_event'):
+                try:
+                    await service.handle_event(event_name, self.name, data)
+                except Exception as e:
+                    logger.error(f"Event gönderimi sırasında hata: {str(e)}")
+                    
+    async def handle_event(self, event_name: str, sender: str, data: Dict[str, Any]) -> None:
+        """Diğer servislerden gelen eventi işler."""
+        logger.debug(f"{self.name} servisi '{event_name}' eventi aldı ({sender} göndericisinden)")
+        # Alt sınıflar bu metodu override edebilir
+
+class SomeService(BaseService):
+    def __init__(self, client, config, db, stop_event=None):
+        # İlk parametre olarak servis adını belirt
+        super().__init__("service_name_here", client, config, db, stop_event)
+        
+        # Diğer başlatma kodları...

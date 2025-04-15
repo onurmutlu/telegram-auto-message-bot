@@ -8,79 +8,80 @@
 # ============================================================================ #
 """
 
-import asyncio
 import logging
-from typing import Any, Optional
+from typing import Dict, Any, Optional
+
+# Tüm servisleri import et
+from bot.services.user_service import UserService
+from bot.services.group_service import GroupService
+from bot.services.reply_service import ReplyService
+from bot.services.dm_service import DMService
+from bot.services.invite_service import InviteService
+from bot.services.promo_service import PromoService
+from bot.services.announcement_service import AnnouncementService
+from bot.services.gpt_service import GptService
+# DataMiningService sınıfını import et
+from bot.services.data_mining_service import DataMiningService
+# MessageService sınıfını import et
+from bot.services.message_service import MessageService
 
 logger = logging.getLogger(__name__)
 
 class ServiceFactory:
     """
-    Servis nesnelerini oluşturan fabrika sınıfı.
-    
-    Bu sınıf, çeşitli servis tiplerini oluşturmaktan sorumludur. Tüm servislerin
-    aynı yapılandırma ve bağımlılıkları paylaşmasını sağlar.
-    
-    Attributes:
-        client: Telethon istemcisi
-        config: Uygulama yapılandırması
-        db: Veritabanı bağlantısı
-        stop_event: Durdurma sinyali için asyncio.Event nesnesi
+    Farklı servis nesnelerini oluşturan fabrika sınıfı.
+    Bu sınıf, servis türüne göre uygun servis örneği oluşturur.
     """
-    
-    def __init__(self, client: Any, config: Any, db: Any, stop_event: asyncio.Event):
+
+    def __init__(self):
         """
         ServiceFactory sınıfının başlatıcısı.
+        İhtiyaç duyulan parametreler create_service metoduna geçirilecek.
+        """
+        # Loglama için
+        self.logger = logging.getLogger(__name__)
+
+    def create_service(self, service_type, client, config, db, stop_event=None):
+        """
+        Belirtilen tipte yeni bir servis nesnesi oluşturur.
         
         Args:
-            client: Telethon istemcisi
-            config: Uygulama yapılandırması
+            service_type: Oluşturulacak servis tipi
+            client: Telegram istemcisi
+            config: Yapılandırma nesnesi
             db: Veritabanı bağlantısı
-            stop_event: Durdurma sinyali için asyncio.Event nesnesi
-        """
-        self.client = client
-        self.config = config
-        self.db = db
-        self.stop_event = stop_event
-        
-    def create_service(self, service_type: str) -> Optional[Any]:
-        """
-        Belirtilen tipte servis oluşturur.
-        
-        Args:
-            service_type: Servis tipi ('user', 'group', 'dm', vb.)
+            stop_event: Durdurma sinyali
             
         Returns:
-            Optional[Any]: Oluşturulan servis nesnesi veya None
+            BaseService: Oluşturulan servis nesnesi
         """
         try:
-            if service_type == "user":
-                from bot.services.user_service import UserService
-                return UserService(self.client, self.config, self.db, self.stop_event)
-                
-            elif service_type == "group":
-                from bot.services.group_service import GroupService
-                return GroupService(self.client, self.config, self.db, self.stop_event)
-                
-            elif service_type == "reply":
-                from bot.services.reply_service import ReplyService
-                return ReplyService(self.client, self.config, self.db, self.stop_event)
-                
-            elif service_type == "dm":
-                from bot.services.dm_service import DMService
-                return DMService(self.client, self.config, self.db, self.stop_event)
-                
-            elif service_type == "invite":
-                from bot.services.invite_service import InviteService
-                return InviteService(self.client, self.config, self.db, self.stop_event)
-                
+            # Servis tiplerine göre service oluşturucu fonksiyonlar
+            service_creators = {
+                "user": lambda: UserService(client, config, db, stop_event),
+                "group": lambda: GroupService(client, config, db, stop_event),
+                "reply": lambda: ReplyService(client, config, db, stop_event),
+                "dm": lambda: DMService(client, config, db, stop_event),
+                "invite": lambda: InviteService(client, config, db, stop_event),
+                "promo": lambda: PromoService(client, config, db, stop_event),
+                "announcement": lambda: AnnouncementService(client, config, db, stop_event),
+                "gpt": lambda: GptService(client, config, db, stop_event),
+                "datamining": lambda: DataMiningService(client, config, db, stop_event),
+                "message": lambda: MessageService(client, config, db, stop_event)
+            }
+            
+            # Servis tipine uygun oluşturucu var mı?
+            if service_type in service_creators:
+                # Service'i oluştur ve döndür
+                service = service_creators[service_type]()
+                self.logger.info(f"{service_type.capitalize()} servisi başarıyla oluşturuldu")
+                return service
             else:
-                logger.warning(f"Bilinmeyen servis tipi: {service_type}")
+                self.logger.warning(f"Bilinmeyen servis tipi: {service_type}")
                 return None
                 
-        except ImportError as e:
-            logger.error(f"Servis modülü içe aktarılamadı ({service_type}): {str(e)}")
-            return None
         except Exception as e:
-            logger.error(f"Servis oluşturulamadı ({service_type}): {str(e)}")
+            self.logger.error(f"Servis oluşturulurken hata ({service_type}): {str(e)}")
+            import traceback
+            self.logger.debug(traceback.format_exc())  # Daha detaylı hata bilgisi
             return None

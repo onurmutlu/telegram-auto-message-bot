@@ -20,7 +20,10 @@ print(f"{Fore.CYAN}=========== GRUP MESAJI GÖNDERME TESTİ ==========={Style.RE
 async def test_group_handler():
     """GroupHandler'ın mesaj gönderme işlevini test eder."""
     config = Config()
-    user_db = UserDatabase()
+    
+    # Veritabanı yolunu .env'den al veya varsayılan kullan
+    db_path = os.getenv("DB_PATH", "data/bot.db")
+    user_db = UserDatabase(db_path)
     
     # API Kimlik bilgileri
     api_id = int(os.getenv("API_ID"))

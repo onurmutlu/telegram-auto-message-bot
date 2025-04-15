@@ -472,6 +472,7 @@ class InviteHandler:
         try:
             # Şablon dosyası kontrolü 
             template_paths = [
+                "data/invites.json",
                 "data/invite_templates.json",
                 "data/templates/invite_messages.json",
                 "config/templates.json"
@@ -485,6 +486,16 @@ class InviteHandler:
                         if isinstance(data, dict):
                             if "invite_templates" in data:
                                 templates = data["invite_templates"]
+                                if templates:
+                                    logger.info(f"{len(templates)} davet şablonu {path} dosyasından yüklendi")
+                                    return templates
+                            elif "invites" in data:
+                                templates = data["invites"]
+                                if templates:
+                                    logger.info(f"{len(templates)} davet şablonu {path} dosyasından yüklendi")
+                                    return templates
+                            elif "first_invite" in data:
+                                templates = data["first_invite"]
                                 if templates:
                                     logger.info(f"{len(templates)} davet şablonu {path} dosyasından yüklendi")
                                     return templates

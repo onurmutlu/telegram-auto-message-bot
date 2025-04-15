@@ -10,61 +10,60 @@
 
 import asyncio
 import logging
+import functools
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+import sqlite3
+import inspect
+import random
 
+from telethon import errors
 from bot.services.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
 class UserService(BaseService):
     """
-    Kullanıcı yönetimi ve işlemleri için servis.
-    
-    Bu servis, kullanıcı bilgilerini yönetmek, kullanıcı istatistiklerini
-    toplamak ve kullanıcılarla ilgili işlemleri gerçekleştirmek için
-    kullanılır.
-    
-    Attributes:
-        user_cache: Önbelleğe alınmış kullanıcı bilgileri
-        user_stats: Kullanıcı istatistikleri
+    Kullanıcı veritabanı işlemlerini yöneten servis.
     """
     
-    def __init__(self, client: Any, config: Any, db: Any, stop_event: asyncio.Event):
+    def __init__(self, client, config, db, stop_event=None):
         """
         UserService sınıfının başlatıcısı.
         
         Args:
-            client: Telethon istemcisi
-            config: Uygulama yapılandırması
-            db: Veritabanı bağlantısı
-            stop_event: Durdurma sinyali için asyncio.Event nesnesi
+            client: Telegram istemcisi
+            config: Yapılandırma nesnesi
+            db: Veritabanı nesnesi
+            stop_event: Durdurma sinyali için event nesnesi
         """
+        # BaseService.__init__ çağrısı eklendi - burada "user" adını belirtmek kritik
         super().__init__("user", client, config, db, stop_event)
         
-        # Kullanıcı önbelleği ve istatistikler
-        self.user_cache: Dict[int, Dict] = {}
-        self.user_stats: Dict[int, Dict] = {}
-        self.cache_size = 100
-        self.cache_ttl = 3600  # 1 saat
-        
-        # Telethon event handler'ları
-        self.registered_handlers = []
-        
-        # Diğer servislere referans
-        self.services = {}
-        
-    def set_services(self, services: Dict[str, Any]) -> None:
+        # Diğer özellikler...
+        self.users = {}
+        self.stats = {
+            'total_users': 0,
+            'new_users': 0,
+            'active_users': 0
+        }
+        self.last_user_update = None
+        self.user_cache = {}
+        self.user_stats = {}
+        self.cache_ttl = 3600  # 1 saat önbellek süresi
+        self.registered_handlers = []  # Event handler'ları saklamak için liste
+        self.cache_hit_ratio = 0.0
+        self.error_count = 0
+    
+    def set_services(self, services):
         """
         Diğer servislere referansları ayarlar.
         
         Args:
             services: Servis adı -> Servis nesnesi eşleşmesi
-            
-        Returns:
-            None
         """
         self.services = services
+        logger.debug(f"{self.name} servisi diğer servislere bağlandı")
         
     async def initialize(self) -> bool:
         """
@@ -89,11 +88,19 @@ class UserService(BaseService):
     def _register_event_handlers(self) -> None:
         """
         Telethon olay işleyicilerini kaydeder.
-        
-        Returns:
-            None
         """
         from telethon import events
+        
+        # Önceki handlerlari temizle
+        if hasattr(self, "registered_handlers") and self.registered_handlers:
+            for handler in self.registered_handlers:
+                try:
+                    self.client.remove_event_handler(handler)
+                except Exception:
+                    pass
+            self.registered_handlers = []
+        else:
+            self.registered_handlers = []
         
         # Yeni kullanıcı girişi
         handler = self.client.add_event_handler(
@@ -102,12 +109,7 @@ class UserService(BaseService):
         )
         self.registered_handlers.append(handler)
         
-        # Kullanıcı çıkışı
-        handler = self.client.add_event_handler(
-            self._handle_user_left,
-            events.ChatAction(func=lambda e: e.user_left or e.user_kicked)
-        )
-        self.registered_handlers.append(handler)
+        # Diğer handlerleri ekleyin...
         
     async def run(self) -> None:
         """
@@ -150,39 +152,108 @@ class UserService(BaseService):
             user_id = event.user_id
             chat_id = event.chat_id
             
-            # Kullanıcı bilgisini al
-            user = await event.client.get_entity(user_id)
+            # Kullanıcı entity'sini güvenli şekilde al
+            user = None
+            try:
+                # Belirli bir süre içinde entity almayı dene - zaman aşımı ekle
+                # PeerUser hatasına karşı ekstra önlem
+                try:
+                    user = await asyncio.wait_for(
+                        event.client.get_entity(user_id),
+                        timeout=5.0  # 5 saniyelik zaman aşımı
+                    )
+                except (ValueError, TypeError) as e:
+                    if "Could not find the input entity for" in str(e) or "Cannot find any entity corresponding to" in str(e):
+                        logger.warning(f"PeerUser entity bulunamadı, InputUserFromMessage ile deneniyor: {user_id}")
+                        # Alternatif yöntem: InputUserFromMessage kullanarak dene
+                        message = await event.get_message()
+                        if message:
+                            from telethon.tl.types import InputUserFromMessage
+                            input_user = InputUserFromMessage(
+                                peer=event.chat_id,
+                                msg_id=message.id,
+                                user_id=user_id
+                            )
+                            user = await event.client.get_entity(input_user)
+                    else:
+                        raise
+            except asyncio.TimeoutError:
+                logger.warning(f"Kullanıcı entity alma zaman aşımı: {user_id}")
+            except (ValueError, errors.RPCError) as e:
+                logger.warning(f"Kullanıcı entity alınamadı ({user_id}): {str(e)}")
+                
+                # Alternatif: Event'ten kullanıcı bilgisini al
+                if hasattr(event, 'user') and event.user:
+                    user = event.user
+                    logger.info(f"Alternatif yöntem ile kullanıcı bilgisi alındı: {user_id}")
+                else:
+                    # Entity alınamadı ama yine de veritabanına temel bilgileri kaydedeceğiz
+                    # En azından bir ID'ye sahibiz
+                    if hasattr(self.db, 'add_user'):
+                        user_data = {
+                            'id': user_id,
+                            'username': None,
+                            'first_name': None,
+                            'last_name': None,
+                            'chat_id': chat_id,
+                            'join_date': datetime.now(),
+                            'entity_error': True  # Entity alma hatası olduğunu işaretle
+                        }
+                        
+                        try:
+                            # Geliştirilmiş bağlantı yönetimi ile veritabanı işlemini yap
+                            await self._run_async_db_method(self.db.add_user, **user_data)
+                            logger.info(f"Minimum kullanıcı bilgisi kaydedildi: {user_id}")
+                        except sqlite3.OperationalError as db_err:
+                            logger.error(f"Kullanıcı kaydedilemedi, veritabanı hatası: {str(db_err)}")
+                        except Exception as e2:
+                            logger.error(f"Kullanıcı ekleme hatası: {str(e2)}")
+                        
+                    # İstatistik güncelle
+                    if user_id not in self.user_stats:
+                        self.user_stats[user_id] = {'joins': 0, 'leaves': 0, 'messages': 0}
+                    self.user_stats[user_id]['joins'] += 1
+                    
+                    return  # Entity alamadığımız için diğer işlemleri atlayalım
             
-            # Veritabanına kaydet
-            if hasattr(self.db, 'add_user'):
-                user_data = {
-                    'id': user_id,
-                    'username': user.username,
-                    'first_name': user.first_name,
-                    'last_name': user.last_name,
-                    'chat_id': chat_id,
-                    'join_date': datetime.now()
+            # Bu noktada, user nesnesini başarıyla aldık veya alamadık
+            if user:
+                # Veritabanına kaydet
+                if hasattr(self.db, 'add_user'):
+                    user_data = {
+                        'id': user_id,
+                        'username': getattr(user, 'username', None),
+                        'first_name': getattr(user, 'first_name', None),
+                        'last_name': getattr(user, 'last_name', None),
+                        'chat_id': chat_id,
+                        'join_date': datetime.now()
+                    }
+                    
+                    try:
+                        # Geliştirilmiş bağlantı yönetimi ile veritabanı işlemini yap
+                        await self._run_async_db_method(self.db.add_user, **user_data)
+                    except sqlite3.OperationalError as db_err:
+                        logger.error(f"Kullanıcı kaydedilemedi, veritabanı hatası: {str(db_err)}")
+                    except Exception as e2:
+                        logger.error(f"Kullanıcı ekleme hatası: {str(e2)}")
+                
+                # Önbelleğe ekle
+                self.user_cache[user_id] = {
+                    'username': getattr(user, 'username', None),
+                    'first_name': getattr(user, 'first_name', None),
+                    'last_name': getattr(user, 'last_name', None),
+                    'cache_time': datetime.now()
                 }
                 
-                await self._run_async_db_method(self.db.add_user, **user_data)
+                # İstatistik güncelle
+                if user_id not in self.user_stats:
+                    self.user_stats[user_id] = {'joins': 0, 'leaves': 0, 'messages': 0}
+                self.user_stats[user_id]['joins'] += 1
                 
-            # Önbelleğe ekle
-            self.user_cache[user_id] = {
-                'username': user.username,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-                'cache_time': datetime.now()
-            }
-            
-            # İstatistik güncelle
-            if user_id not in self.user_stats:
-                self.user_stats[user_id] = {'joins': 0, 'leaves': 0, 'messages': 0}
-            self.user_stats[user_id]['joins'] += 1
-            
-            # Gruplar arası iletişim
-            await self._notify_services_new_user(user_id, user.username, chat_id)
-            
-            logger.info(f"Yeni kullanıcı: {user_id} (@{user.username}) -> {chat_id}")
+                # Gruplar arası iletişim
+                await self._notify_services_new_user(user_id, getattr(user, 'username', None), chat_id)
+                
+                logger.info(f"Yeni kullanıcı: {user_id} (@{getattr(user, 'username', 'Bilinmiyor')}) -> {chat_id}")
             
         except Exception as e:
             logger.error(f"Yeni kullanıcı işleme hatası: {str(e)}")
@@ -300,20 +371,18 @@ class UserService(BaseService):
     async def stop(self) -> None:
         """
         Servisi güvenli bir şekilde durdurur.
-        
-        Returns:
-            None
         """
         self.running = False
         logger.info("User servisi durduruluyor...")
         
         # Event handler'ları kaldır
-        for handler in self.registered_handlers:
-            self.client.remove_event_handler(handler)
-        self.registered_handlers.clear()
+        if hasattr(self, 'registered_handlers'): 
+            for handler in self.registered_handlers:
+                self.client.remove_event_handler(handler)
+            self.registered_handlers.clear()
         
         # İstatistikleri kaydet
-        if hasattr(self.db, 'save_user_stats'):
+        if hasattr(self.db, 'save_user_stats') and hasattr(self, 'user_stats'):
             await self._run_async_db_method(self.db.save_user_stats, self.user_stats)
             
         await super().stop()
@@ -352,3 +421,262 @@ class UserService(BaseService):
             'total_messages': total_messages,
             'cache_hit_ratio': self.cache_hit_ratio if hasattr(self, 'cache_hit_ratio') else 0
         }
+
+    async def _run_async_db_method(self, method, *args, **kwargs):
+        """
+        Veritabanı methodlarını asenkron bir şekilde çalıştırır ve kilitlenme sorunlarını yönetir.
+        Geliştirilmiş bağlantı havuzu ile çalışır.
+        
+        Args:
+            method: Çağrılacak veritabanı methodu
+            *args, **kwargs: Methoda geçirilecek parametreler
+            
+        Returns:
+            Methodun sonucunu döndürür
+        """
+        max_attempts = 5
+        base_delay = 0.5  # saniye
+        
+        for attempt in range(max_attempts):
+            try:
+                if inspect.iscoroutinefunction(method):
+                    result = await method(*args, **kwargs)
+                else:
+                    # Veritabanı yöneticisi doğrudan erişim sağlar, thread-safe
+                    result = await self.loop.run_in_executor(
+                        None, functools.partial(method, *args, **kwargs))
+                return result
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < max_attempts - 1:
+                    # Üstel geri çekilme stratejisi (exponential backoff)
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 0.5)
+                    logger.warning(f"DB kilitli (run_async), {attempt+1}/{max_attempts} deneme. {delay:.2f}s bekleniyor...")
+                    await asyncio.sleep(delay)
+                else:
+                    if attempt == max_attempts - 1:
+                        logger.error(f"Veritabanı kilitli hatası çözülemedi ({max_attempts} deneme sonrası)")
+                    else:
+                        logger.error(f"Veritabanı hatası: {str(e)}")
+                    raise
+            except Exception as e:
+                logger.error(f"DB method çağrısı hatası: {str(e)}")
+                raise
+                
+    async def process_user(self, user_id, action=None):
+        """Bir kullanıcı ile ilgili işlem yapar"""
+        try:
+            # Önce cache'i kontrol et
+            if user_id in self.user_cache:
+                user_info = self.user_cache[user_id]
+                # Entity almaya gerek yok, direkt işle
+                if action and hasattr(self, f"_action_{action}"):
+                    action_method = getattr(self, f"_action_{action}")
+                    await action_method(user_id, user_info)
+                return True
+                
+            # Güvenli entity alma işlemi
+            try:
+                # İlk olarak klasik yöntemi dene
+                # Zaman aşımı ekle
+                user_entity = await asyncio.wait_for(
+                    self.client.get_entity(user_id), 
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Kullanıcı entity alma zaman aşımı: {user_id}")
+                return False
+            except ValueError:
+                try:
+                    # ID'den bulunamadıysa, veritabanından username kontrolü yap
+                    if hasattr(self.db, 'get_user_by_id'):
+                        # Veritabanı kilitlenme sorunlarına karşı retry mekanizması
+                        for attempt in range(3):
+                            try:
+                                user_data = await self._run_async_db_method(self.db.get_user_by_id, user_id)
+                                break
+                            except sqlite3.OperationalError as db_err:
+                                if "database is locked" in str(db_err) and attempt < 2:
+                                    logger.warning(f"Veritabanı kilitli, {attempt+1}/3 deneme...")
+                                    await asyncio.sleep(1 * (attempt + 1))
+                                else:
+                                    logger.error(f"Veritabanı hatası: {str(db_err)}")
+                                    return False
+                            except Exception as e2:
+                                logger.error(f"Kullanıcı veri alma hatası: {str(e2)}")
+                                return False
+                        
+                        if user_data and user_data.get('username'):
+                            # Username ile dene
+                            username = user_data.get('username')
+                            try:
+                                user_entity = await asyncio.wait_for(
+                                    self.client.get_entity(f"@{username}"),
+                                    timeout=5.0
+                                )
+                            except asyncio.TimeoutError:
+                                logger.warning(f"Username ile entity alma zaman aşımı: @{username}")
+                                return False
+                            except Exception:
+                                logger.warning(f"Username ile entity alınamadı: @{username}")
+                                return False
+                        else:
+                            logger.warning(f"Kullanıcı bulunamadı: {user_id}")
+                            # İsteğe bağlı: Bulunamayan kullanıcıyı veritabanında işaretleyebiliriz
+                            if hasattr(self.db, 'mark_user_not_found'):
+                                # Yeniden deneme mekanizması
+                                for attempt in range(3):
+                                    try:
+                                        await self._run_async_db_method(self.db.mark_user_not_found, user_id)
+                                        break
+                                    except sqlite3.OperationalError as db_err:
+                                        if "database is locked" in str(db_err) and attempt < 2:
+                                            logger.warning(f"Veritabanı kilitli, {attempt+1}/3 deneme...")
+                                            await asyncio.sleep(1 * (attempt + 1))
+                                        else:
+                                            logger.error(f"Veritabanı hatası: {str(db_err)}")
+                                            break
+                            return False
+                    else:
+                        logger.warning(f"Kullanıcı bulunamadı ve veritabanı metodu yok: {user_id}")
+                        return False
+                except Exception as e2:
+                    logger.error(f"Entity alma hatası (alternatif yöntem): {str(e2)}")
+                    return False
+                    
+            # Entity bulundu, işleme devam et
+            username = user_entity.username if hasattr(user_entity, 'username') else None
+            first_name = user_entity.first_name if hasattr(user_entity, 'first_name') else None
+            last_name = user_entity.last_name if hasattr(user_entity, 'last_name') else None
+            
+            # Kullanıcı veritabanında yoksa ekle
+            if hasattr(self.db, 'add_user'):
+                # Yeniden deneme mekanizması
+                for attempt in range(3):
+                    try:
+                        await self._run_async_db_method(
+                            self.db.add_user, 
+                            id=user_id,
+                            username=username,
+                            first_name=first_name,
+                            last_name=last_name,
+                            update_time=datetime.now()
+                        )
+                        break
+                    except sqlite3.OperationalError as db_err:
+                        if "database is locked" in str(db_err) and attempt < 2:
+                            logger.warning(f"Veritabanı kilitli, {attempt+1}/3 deneme...")
+                            await asyncio.sleep(1 * (attempt + 1))
+                        else:
+                            logger.error(f"Veritabanı hatası: {str(db_err)}")
+                            break
+                    except Exception as e2:
+                        logger.error(f"Kullanıcı ekleme hatası: {str(e2)}")
+                        break
+            
+            # Önbelleğe ekle
+            self.user_cache[user_id] = {
+                'username': username,
+                'first_name': first_name,
+                'last_name': last_name,
+                'cache_time': datetime.now()
+            }
+            
+            # Belirtilen aksiyonu gerçekleştir
+            if action and hasattr(self, f"_action_{action}"):
+                action_method = getattr(self, f"_action_{action}")
+                await action_method(user_id, user_entity)
+            
+            return True
+            
+        except errors.FloodWaitError as e:
+            wait_time = e.seconds
+            logger.warning(f"Hız sınırı aşıldı, {wait_time} saniye bekleniyor")
+            await asyncio.sleep(wait_time)
+            # İsteğe bağlı: İşlemi tekrar deneyebiliriz
+            return False
+        except Exception as e:
+            self.error_count += 1
+            logger.error(f"Kullanıcı işleme hatası: {str(e)}")
+            return False
+
+    async def get_safe_entity(self, user_id, username=None):
+        """
+        Kullanıcı entity'sini güvenli bir şekilde almaya çalışır.
+        Çeşitli yöntemleri dener ve başarısız olursa None döndürür.
+        
+        Args:
+            user_id: Kullanıcı ID
+            username: Kullanıcı adı (opsiyonel)
+            
+        Returns:
+            User entity veya None
+        """
+        try:
+            # Önce ID ile deneyelim
+            try:
+                # InputPeerUser kullanarak deneyelim
+                try:
+                    from telethon.tl.types import InputPeerUser, InputUser
+                    return await self.client.get_entity(InputPeerUser(user_id, 0))
+                except (ValueError, TypeError):
+                    # Doğrudan ID ile deneyelim
+                    return await self.client.get_entity(user_id)
+            except (ValueError, errors.RPCError) as e:
+                logger.debug(f"ID ile entity alınamadı: {user_id}, hata: {str(e)}")
+                # ID ile bulunamadı, username ile deneyelim
+                pass
+                
+            # Username ile deneyelim (eğer varsa)
+            if username:
+                try:
+                    return await self.client.get_entity(f"@{username}")
+                except (ValueError, errors.RPCError) as e:
+                    logger.debug(f"Username ile entity alınamadı: @{username}, hata: {str(e)}")
+                    # Username ile de bulunamadı
+                    pass
+                    
+            # Veritabanında kayıtlı username ile deneyelim
+            if hasattr(self.db, 'get_user_by_id'):
+                try:
+                    user_data = await self._run_async_db_method(self.db.get_user_by_id, user_id)
+                    if user_data and user_data.get('username'):
+                        try:
+                            return await self.client.get_entity(f"@{user_data['username']}")
+                        except (ValueError, errors.RPCError) as e:
+                            logger.debug(f"DB'deki username ile entity alınamadı: @{user_data['username']}, hata: {str(e)}")
+                            # Veritabanındaki username ile de bulunamadı
+                            pass
+                except Exception as db_err:
+                    logger.debug(f"DB'den kullanıcı bilgisi alınırken hata: {str(db_err)}")
+                
+            # Son çare: Get dialogs üzerinden arama yapabilir
+            try:
+                async for dialog in self.client.iter_dialogs():
+                    if dialog.id == user_id or (dialog.entity and hasattr(dialog.entity, 'id') and dialog.entity.id == user_id):
+                        return dialog.entity
+            except Exception as dialog_err:
+                logger.debug(f"Dialog üzerinden entity arama hatası: {str(dialog_err)}")
+                    
+            # Hiçbir yöntem işe yaramadı
+            logger.warning(f"Kullanıcı entity'sine erişilemedi: {user_id}/{username}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Entity alımı sırasında beklenmedik hata: {str(e)}")
+            return None
+
+    def get_user_count(self):
+        """
+        Veritabanındaki toplam kullanıcı sayısını döndürür.
+        
+        Returns:
+            int: Toplam kullanıcı sayısı
+        """
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM users")
+            result = cursor.fetchone()
+            return result[0] if result else 0
+        except Exception as e:
+            logger.error(f"Kullanıcı sayısı alınırken hata: {str(e)}")
+            return 0
