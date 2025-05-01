@@ -27,6 +27,7 @@ import tty
 import select
 import json
 import matplotlib.pyplot as plt
+import psycopg2
 
 # Initialize colorama
 init(autoreset=True)
@@ -179,7 +180,8 @@ def show_help():
         "[yellow]d[/yellow] - Demografik analiz göster\n"
         "[yellow]m[/yellow] - Veri madenciliği ve analiz yönetimi\n"
         "[yellow]t[/yellow] - Hedefli kampanya oluştur ve yönet\n"
-        "[yellow]a[/yellow] - Agresif veri toplama başlat\n"
+        "[yellow]a[/yellow] - Grup analitik raporu göster\n"
+        "[yellow]e[/yellow] - Hata izleme raporu göster\n"
         "[yellow]q[/yellow] - Botu kapat",
         title="Yardım",
         border_style="cyan"
@@ -269,22 +271,33 @@ async def handle_keyboard_input(console, service_manager, stop_event):
     
     while not stop_event.is_set():
         try:
-            # Kullanıcıdan girişi al
-            command = await asyncio.to_thread(input, "\nKomut (h/s/i/c/r/l/d/m/t/a/q): ")
+            # Kullanıcıdan girişi al (asyncio.to_thread ile asenkron olarak)
+            command = await asyncio.to_thread(input, "\nKomut (h/s/i/c/r/l/d/m/t/a/e/q): ")
             command = command.strip().lower()
             
+            # Boş komutu kontrol et
+            if not command:
+                continue
+                
             # Komutu işle
             should_exit = await process_command(command, service_manager)
             
             # Çıkış sinyali geldiyse döngüden çık
             if should_exit:
+                console.print("[bold red]Bot kapatılıyor...[/bold red]")
                 stop_event.set()
                 break
                 
         except asyncio.CancelledError:
+            console.print("[bold yellow]Klavye işleme iptal edildi[/bold yellow]")
+            break
+        except KeyboardInterrupt:
+            console.print("[bold yellow]Klavye kesintisi algılandı, çıkılıyor...[/bold yellow]")
+            stop_event.set()
             break
         except Exception as e:
             logger.error(f"Komut işleme hatası: {str(e)}")
+            console.print(f"[bold red]Komut işleme hatası: {str(e)}[/bold red]")
             await asyncio.sleep(1)
     
     return True  # İşlem tamamlandı
@@ -292,12 +305,28 @@ async def handle_keyboard_input(console, service_manager, stop_event):
 async def process_command(cmd, service_manager):
     """
     Girilen komutu işler. Ana thread'den çağrılır.
+    
+    Args:
+        cmd: Girilen komut
+        service_manager: Servis yönetici nesnesi
+        
+    Returns:
+        bool: True ise çıkış sinyali, False ise normal işlem
     """
     try:
         cmd = cmd.lower()
         
         if cmd == 'q':
-            print("\n\nBot kapatılıyor...")
+            console.print("\n[bold yellow]Bot kapatılıyor...[/bold yellow]")
+            # Kapatma işlemini başlat
+            try:
+                # Servisleri güvenli şekilde kapat
+                console.print("[cyan]Servisler durduruluyor...[/cyan]")
+                await service_manager.stop_all_services()
+                console.print("[green]Servisler başarıyla durduruldu.[/green]")
+            except Exception as e:
+                console.print(f"[red]Servis durdurma hatası: {str(e)}[/red]")
+            
             return True  # Çıkış sinyali
             
         elif cmd == 'h':
@@ -310,8 +339,10 @@ async def process_command(cmd, service_manager):
             await show_statistics(service_manager)
             
         elif cmd == 'c':
+            # Platformlar arası temizleme
             os.system('cls' if os.name == 'nt' else 'clear')
-            print("Konsol temizlendi. Komutlar için 'h' tuşuna basın.")
+            console.print("[green]Konsol temizlendi.[/green]")
+            console.print("[cyan]Klavye komutları aktif. Komutlar için 'h' tuşuna basın.[/cyan]")
             
         elif cmd == 'r':
             await restart_services(service_manager)
@@ -331,20 +362,25 @@ async def process_command(cmd, service_manager):
         elif cmd == 't':
             await show_campaign_menu(service_manager)
         
-        # Agresif veri toplama komutu
-        elif cmd == 'a' or cmd == 'agresif':
-            console.print("[bold yellow]Agresif veri toplama başlatılıyor...[/bold yellow]")
-            group_service = service_manager.get_service("group")
-            if group_service:
-                discovered = await group_service.discover_groups_aggressive()
-                console.print(f"[bold green]Agresif veri toplama tamamlandı! {len(discovered)} grup işlendi[/bold green]")
-            else:
-                console.print("[bold red]Grup servisi bulunamadı![/bold red]")
+        # Grup analitik raporu gösterme komutu
+        elif cmd == 'a':
+            await display_analytics(service_manager)
+        
+        # Hata izleme raporu gösterme komutu
+        elif cmd == 'e':
+            await display_error_report(service_manager)
+        
+        # Tanımlanmamış komut
+        else:
+            console.print(f"[yellow]Bilinmeyen komut: '{cmd}'. Yardım için 'h' yazın.[/yellow]")
             
         return False  # Normal işlem sinyali
         
     except Exception as e:
         logger.error(f"Komut işleme hatası: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        console.print(f"[bold red]Komut işleme hatası: {str(e)}[/bold red]")
         return False
 
 # Demografik analiz gösterme fonksiyonu
@@ -670,3 +706,230 @@ async def show_campaign_menu(service_manager):
             console.print("[yellow]Henüz kaydedilmiş kampanya bulunmuyor.[/yellow]")
         except Exception as e:
             console.print(f"[bold red]Kampanya gönderimi hatası: {str(e)}[/bold red]")
+
+# YENİ: Grup Analitik Raporu gösterme fonksiyonu
+async def display_analytics(service_manager):
+    """Grup analitik raporunu gösterir"""
+    try:
+        analytics_service = service_manager.get_service("analytics")
+        
+        if not analytics_service:
+            console.print("[bold red]Analytics servisi bulunamadı![/bold red]")
+            return
+        
+        # Ana analitik raporu al
+        console.print("[cyan]Grup analitik raporu alınıyor, lütfen bekleyin...[/cyan]")
+        
+        # En aktif grupları al
+        top_active_groups = await analytics_service.get_top_active_groups(limit=10)
+        
+        # En hızlı büyüyen grupları al
+        top_growing_groups = await analytics_service.get_top_growing_groups(limit=5)
+        
+        # Genel analitik raporu al
+        report = await analytics_service.generate_analytics_report(days=7)
+        
+        # Ana panel ve başlık
+        console.print(Panel(
+            f"[bold white]Grup Analitik Raporu[/bold white]\n"
+            f"[cyan]Oluşturulma: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+            f"Analiz Periyodu: Son 7 gün[/cyan]",
+            border_style="blue"
+        ))
+        
+        # Özet İstatistikler Tablosu
+        summary_table = Table(title="Özet İstatistikler", show_header=True)
+        summary_table.add_column("Metrik", style="cyan")
+        summary_table.add_column("Değer", style="green", justify="right")
+        
+        summary_table.add_row("Toplam Grup Sayısı", str(report.get('total_groups', 0)))
+        summary_table.add_row("Toplam Üye Sayısı", str(report.get('total_members', 0)))
+        summary_table.add_row("Toplam Mesaj Sayısı", str(report.get('total_messages', 0)))
+        summary_table.add_row("Aktif Kullanıcı Sayısı", str(report.get('active_users', 0)))
+        summary_table.add_row("Ortalama Etkileşim Oranı", f"{report.get('avg_engagement', 0):.2f}%")
+        
+        console.print(summary_table)
+        
+        # En Aktif Gruplar Tablosu
+        active_table = Table(title="En Aktif 10 Grup", show_header=True)
+        active_table.add_column("Grup Adı", style="cyan")
+        active_table.add_column("Mesaj Sayısı", style="green", justify="right")
+        active_table.add_column("Aktif Üyeler", style="green", justify="right")
+        active_table.add_column("Etkileşim", style="green", justify="right")
+        
+        for group in top_active_groups:
+            active_table.add_row(
+                group.get('name', 'Bilinmiyor'), 
+                str(group.get('message_count', 0)),
+                str(group.get('active_users', 0)),
+                f"{group.get('engagement_rate', 0):.2f}%"
+            )
+            
+        console.print(active_table)
+        
+        # En Hızlı Büyüyen Gruplar Tablosu
+        growing_table = Table(title="En Hızlı Büyüyen 5 Grup", show_header=True)
+        growing_table.add_column("Grup Adı", style="cyan")
+        growing_table.add_column("Üye Sayısı", style="green", justify="right")
+        growing_table.add_column("Büyüme", style="green", justify="right")
+        growing_table.add_column("Büyüme Oranı", style="green", justify="right")
+        
+        for group in top_growing_groups:
+            growing_table.add_row(
+                group.get('name', 'Bilinmiyor'), 
+                str(group.get('member_count', 0)),
+                str(group.get('new_members', 0)),
+                f"{group.get('growth_rate', 0):.2f}%"
+            )
+            
+        console.print(growing_table)
+        
+        # Dışa aktarma seçeneği
+        export_choice = input("\nRaporu dışa aktarmak ister misiniz? (csv/json/h): ").lower()
+        if export_choice in ['csv', 'json']:
+            try:
+                # Tüm gruplar için rapor oluştur
+                export_file = await analytics_service.export_analytics(group_id=None, format=export_choice, days=7)
+                console.print(f"[green]Rapor başarıyla dışa aktarıldı: {export_file}[/green]")
+            except Exception as e:
+                console.print(f"[red]Rapor dışa aktarılırken hata: {str(e)}[/red]")
+        
+    except Exception as e:
+        console.print(f"[bold red]Grup analitik raporu oluşturma hatası: {str(e)}[/bold red]")
+
+# YENİ: Hata İzleme Raporu gösterme fonksiyonu
+async def display_error_report(service_manager):
+    """Hata izleme raporunu gösterir"""
+    try:
+        error_service = service_manager.get_service("error")
+        
+        if not error_service:
+            console.print("[bold red]Error servisi bulunamadı![/bold red]")
+            return
+        
+        # Hata istatistiklerini al
+        console.print("[cyan]Hata izleme raporu alınıyor, lütfen bekleyin...[/cyan]")
+        
+        # Son 24 saatteki kategori istatistiklerini al
+        stats = await error_service.get_category_stats(hours=24)
+        
+        # Ana panel ve başlık
+        console.print(Panel(
+            f"[bold white]Hata İzleme Raporu[/bold white]\n"
+            f"[cyan]Oluşturulma: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+            f"Analiz Periyodu: Son 24 saat[/cyan]",
+            border_style="blue"
+        ))
+        
+        # Kategori İstatistikleri Tablosu
+        category_table = Table(title="Kategori Bazlı Hata İstatistikleri", show_header=True)
+        category_table.add_column("Kategori", style="cyan")
+        category_table.add_column("Toplam Hata", style="green", justify="right")
+        category_table.add_column("Kritik", style="red", justify="right")
+        category_table.add_column("Hata", style="yellow", justify="right")
+        category_table.add_column("Uyarı", style="blue", justify="right")
+        category_table.add_column("Çözümlenen", style="green", justify="right")
+        
+        for category, data in stats.items():
+            category_table.add_row(
+                category,
+                str(data.get('total', 0)),
+                str(data.get('CRITICAL', 0)),
+                str(data.get('ERROR', 0)),
+                str(data.get('WARNING', 0)),
+                str(data.get('resolved', 0))
+            )
+            
+        console.print(category_table)
+        
+        # Çözülmemiş kritik hataları göster
+        critical_errors = await error_service.get_errors(severity="CRITICAL", include_resolved=False, limit=5)
+        
+        if critical_errors:
+            critical_table = Table(title="Çözülmemiş Kritik Hatalar (Son 5)", show_header=True)
+            critical_table.add_column("Hata ID", style="cyan")
+            critical_table.add_column("Hata Tipi", style="red")
+            critical_table.add_column("Mesaj", style="yellow")
+            critical_table.add_column("Kaynak", style="green")
+            critical_table.add_column("Oluşturulma", style="cyan")
+            
+            for error in critical_errors:
+                critical_table.add_row(
+                    str(error.get('error_id', 'N/A')),
+                    error.get('error_type', 'Bilinmiyor'),
+                    error.get('message', 'Mesaj yok'),
+                    error.get('source', 'Bilinmiyor'),
+                    error.get('created_at', 'Bilinmiyor')
+                )
+                
+            console.print(critical_table)
+        
+        # Detaylı hata listesi görme seçeneği
+        category_choice = input("\nDetaylı hata listesi görmek istediğiniz kategori (DATABASE/NETWORK/TELEGRAM_API/GENERAL/h): ").upper()
+        
+        if category_choice in ['DATABASE', 'NETWORK', 'TELEGRAM_API', 'GENERAL']:
+            # Seçilen kategorideki hataları al
+            category_errors = await error_service.get_errors_by_category(
+                category=category_choice, 
+                include_resolved=False,
+                limit=20
+            )
+            
+            if category_errors:
+                error_table = Table(title=f"{category_choice} Kategorisindeki Hatalar (Son 20)", show_header=True)
+                error_table.add_column("Hata ID", style="cyan")
+                error_table.add_column("Hata Tipi", style="red")
+                error_table.add_column("Şiddet", style="yellow")
+                error_table.add_column("Mesaj", style="green")
+                error_table.add_column("Oluşturulma", style="cyan")
+                
+                for error in category_errors:
+                    error_table.add_row(
+                        str(error.get('error_id', 'N/A')),
+                        error.get('error_type', 'Bilinmiyor'),
+                        error.get('severity', 'UNKNOWN'),
+                        error.get('message', 'Mesaj yok')[:50] + ('...' if len(error.get('message', '')) > 50 else ''),
+                        error.get('created_at', 'Bilinmiyor')
+                    )
+                    
+                console.print(error_table)
+            else:
+                console.print(f"[yellow]Bu kategoride hata bulunamadı: {category_choice}[/yellow]")
+        
+    except Exception as e:
+        console.print(f"[bold red]Hata raporu oluşturma hatası: {str(e)}[/bold red]")
+
+async def connect(self):
+    """
+    Veritabanına bağlantı kurar
+    
+    Returns:
+        bool: Bağlantı başarılı ise True, değilse False
+    """
+    try:
+        if self.connected and self.conn and self.cursor:
+            return True
+        
+        logger.info(f"PostgreSQL veritabanına bağlanılıyor: {self.db_path}")
+        
+        # PostgreSQL için bağlantı kurma
+        self.conn = psycopg2.connect(
+            dbname=self.db_name,
+            user=self.db_user,
+            password=self.db_password,
+            host=self.db_host,
+            port=self.db_port
+        )
+        
+        self.conn.autocommit = True
+        self.cursor = self.conn.cursor()
+        self.connected = True
+        logger.info("PostgreSQL veritabanına başarıyla bağlandı")
+        return True
+        
+    except Exception as e:
+        self.connected = False
+        logger.error(f"Veritabanı bağlantı hatası: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False

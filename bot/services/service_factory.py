@@ -10,6 +10,10 @@
 
 import logging
 from typing import Dict, Any, Optional
+import asyncio
+
+# BaseService'i import et
+from bot.services.base_service import BaseService
 
 # Tüm servisleri import et
 from bot.services.user_service import UserService
@@ -20,10 +24,13 @@ from bot.services.invite_service import InviteService
 from bot.services.promo_service import PromoService
 from bot.services.announcement_service import AnnouncementService
 from bot.services.gpt_service import GptService
-# DataMiningService sınıfını import et
-from bot.services.data_mining_service import DataMiningService
+# DataMiningService sınıfını import et - düzeltildi
+from bot.services.datamining_service import DataMiningService
 # MessageService sınıfını import et
 from bot.services.message_service import MessageService
+# Yeni servisler
+from bot.services.analytics_service import AnalyticsService
+from bot.services.error_service import ErrorService
 
 logger = logging.getLogger(__name__)
 
@@ -33,55 +40,74 @@ class ServiceFactory:
     Bu sınıf, servis türüne göre uygun servis örneği oluşturur.
     """
 
-    def __init__(self):
+    def __init__(self, client, config, db, stop_event=None):
         """
         ServiceFactory sınıfının başlatıcısı.
-        İhtiyaç duyulan parametreler create_service metoduna geçirilecek.
-        """
-        # Loglama için
-        self.logger = logging.getLogger(__name__)
-
-    def create_service(self, service_type, client, config, db, stop_event=None):
-        """
-        Belirtilen tipte yeni bir servis nesnesi oluşturur.
         
         Args:
-            service_type: Oluşturulacak servis tipi
             client: Telegram istemcisi
             config: Yapılandırma nesnesi
             db: Veritabanı bağlantısı
             stop_event: Durdurma sinyali
+        """
+        self.client = client
+        self.config = config
+        self.db = db
+        self.stop_event = stop_event or asyncio.Event()
+        
+    def create_service(self, service_type: str, client=None, config=None, db=None, stop_event=None) -> BaseService:
+        """
+        Belirtilen türde bir servis oluşturur.
+        
+        Args:
+            service_type: Oluşturulacak servis türü
+            client: Telegram istemcisi (opsiyonel, verilmezse sınıfın kendi istemcisi kullanılır)
+            config: Yapılandırma nesnesi (opsiyonel, verilmezse sınıfın kendi yapılandırması kullanılır)
+            db: Veritabanı bağlantısı (opsiyonel, verilmezse sınıfın kendi veritabanı bağlantısı kullanılır)
+            stop_event: Durdurma sinyali (opsiyonel, verilmezse sınıfın kendi sinyali kullanılır)
             
         Returns:
             BaseService: Oluşturulan servis nesnesi
+            
+        Raises:
+            ValueError: Geçersiz servis türü
         """
         try:
-            # Servis tiplerine göre service oluşturucu fonksiyonlar
-            service_creators = {
-                "user": lambda: UserService(client, config, db, stop_event),
-                "group": lambda: GroupService(client, config, db, stop_event),
-                "reply": lambda: ReplyService(client, config, db, stop_event),
-                "dm": lambda: DMService(client, config, db, stop_event),
-                "invite": lambda: InviteService(client, config, db, stop_event),
-                "promo": lambda: PromoService(client, config, db, stop_event),
-                "announcement": lambda: AnnouncementService(client, config, db, stop_event),
-                "gpt": lambda: GptService(client, config, db, stop_event),
-                "datamining": lambda: DataMiningService(client, config, db, stop_event),
-                "message": lambda: MessageService(client, config, db, stop_event)
-            }
+            # Varsayılan değerleri ayarla
+            client = client or self.client
+            config = config or self.config
+            db = db or self.db
+            stop_event = stop_event or self.stop_event
             
-            # Servis tipine uygun oluşturucu var mı?
-            if service_type in service_creators:
-                # Service'i oluştur ve döndür
-                service = service_creators[service_type]()
-                self.logger.info(f"{service_type.capitalize()} servisi başarıyla oluşturuldu")
-                return service
-            else:
-                self.logger.warning(f"Bilinmeyen servis tipi: {service_type}")
-                return None
-                
+            # Servis sınıfını al
+            service_class = {
+                "user": UserService,
+                "group": GroupService,
+                "message": MessageService,
+                "reply": ReplyService,
+                "invite": InviteService,
+                "dm": DMService,
+                "announcement": AnnouncementService,
+                "datamining": DataMiningService,
+                "gpt": GptService,
+                "promo": PromoService,
+                "analytics": AnalyticsService,
+                "error": ErrorService
+            }.get(service_type)
+            
+            if not service_class:
+                raise ValueError(f"Geçersiz servis türü: {service_type}")
+            
+            # Servis örneğini oluştur
+            service = service_class(
+                client=client,
+                config=config,
+                db=db,
+                stop_event=stop_event
+            )
+            
+            return service
+            
         except Exception as e:
-            self.logger.error(f"Servis oluşturulurken hata ({service_type}): {str(e)}")
-            import traceback
-            self.logger.debug(traceback.format_exc())  # Daha detaylı hata bilgisi
-            return None
+            logger.error(f"Servis oluşturulurken hata ({service_type}): {str(e)}")
+            raise

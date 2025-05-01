@@ -18,7 +18,9 @@ from datetime import datetime
 import shutil
 import subprocess
 from dotenv import load_dotenv
-import sqlite3
+# SQLite kütüphanesini kaldırdık
+import psycopg2
+from urllib.parse import urlparse
 
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -38,6 +40,7 @@ from bot.services.invite_service import InviteService
 from bot.utils.logger_setup import setup_logger
 from database.pg_db import PgDatabase
 from rich.console import Console
+from bot.celery_app import celery_app  # Celery uygulamasını import et
 
 # Gerekli dizinleri oluştur
 def create_required_directories():
@@ -74,6 +77,16 @@ def configure_logging(debug_mode=False):
     if debug_mode:
         log_level = logging.DEBUG
 
+    # Root logger
+    root_logger = logging.getLogger()
+    
+    # Önce tüm eski handler'ları temizle
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+    
+    # Ana log seviyesini ayarla
+    root_logger.setLevel(log_level)
+    
     # Konsol handler - Rich formatıyla
     from rich.logging import RichHandler
     console_handler = RichHandler(
@@ -83,33 +96,51 @@ def configure_logging(debug_mode=False):
         omit_repeated_times=True
     )
     
-    # Dosya handler (RotatingFileHandler kullanımı)
-    from logging.handlers import RotatingFileHandler
+    # Ana log dosyası için dönen dosya handler
+    log_file_path = "runtime/logs/bot.log"
     file_handler = RotatingFileHandler(
-        "runtime/logs/bot.log", maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
+        log_file_path, 
+        maxBytes=10 * 1024 * 1024,  # 10MB
+        backupCount=10,             # 10 adet yedek dosya
+        encoding="utf-8"
     )
     file_handler.setLevel(log_level)
+    
+    # Hata logları için ayrı bir dosya
+    error_log_path = "runtime/logs/errors.log"
+    error_file_handler = RotatingFileHandler(
+        error_log_path, 
+        maxBytes=5 * 1024 * 1024,   # 5MB
+        backupCount=5,              # 5 adet yedek dosya
+        encoding="utf-8"
+    )
+    error_file_handler.setLevel(logging.ERROR)  # Sadece ERROR ve üstü
 
-    # Formatlayıcı
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    file_handler.setFormatter(formatter)
-
+    # Formatlayıcılar
+    detailed_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
+    )
+    simple_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    
+    # Formatlayıcıları ayarla
+    file_handler.setFormatter(detailed_formatter)
+    error_file_handler.setFormatter(detailed_formatter)
+    
     # Root logger'a handler'ları ekle
-    root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
-    
-    # Eski handler'ları temizle
-    for handler in root_logger.handlers:
-        root_logger.removeHandler(handler)
-    
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
+    root_logger.addHandler(error_file_handler)
     
     # Daha az ayrıntılı loglama için bazı modüllerin seviyelerini artır
-    logging.getLogger('telethon').setLevel(logging.WARNING)
-    logging.getLogger('asyncio').setLevel(logging.WARNING)
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
-    logging.getLogger('aiosqlite').setLevel(logging.WARNING)
+    noise_loggers = [
+        'telethon', 'asyncio', 'urllib3', 'aiosqlite', 
+        'matplotlib', 'PIL', 'httpx', 'httpcore'
+    ]
+    
+    for logger_name in noise_loggers:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
     
     # Task süre uyarılarını filtreleyen özel sınıf
     class TaskDurationFilter(logging.Filter):
@@ -123,14 +154,28 @@ def configure_logging(debug_mode=False):
     # Konsol handler'a filtre ekle (sadece dosyaya yazılsın)
     console_handler.addFilter(TaskDurationFilter())
     
-    # Telethon uyarılarını daha sıkı filtrele
-    class TaskDurationFilter(logging.Filter):
+    # Telethon ve asyncio uyarılarını daha sıkı filtrele
+    class NetworkNoisyFilter(logging.Filter):
         def filter(self, record):
-            return not (record.msg.startswith("Executing <Task") and "took" in record.msg)
+            message = record.getMessage()
+            # Gereksiz ağ mesajlarını filtrele
+            if (
+                message.startswith("Executing <Task") or
+                message.startswith("Connection") or
+                "Disconnected from" in message or
+                "Reconnecting" in message or
+                "Got response" in message
+            ):
+                return False
+            return True
     
     # Filtre ekle
-    asyncio_logger = logging.getLogger("asyncio")
-    asyncio_logger.addFilter(TaskDurationFilter())
+    for logger_name in ['asyncio', 'telethon']:
+        module_logger = logging.getLogger(logger_name)
+        module_logger.addFilter(NetworkNoisyFilter())
+    
+    # Çalıştırma zamanında log dosyasının yerini belirt
+    print(f"Log dosyaları: {log_file_path} ve {error_log_path}")
     
     return root_logger
 
@@ -209,11 +254,48 @@ def add_signal_handlers(stop_event):
         logger.info("Kapatma sinyali alındı. Servisleri durdurma...")
         stop_event.set()
         
+        # Ana döngüye shutdown görevi ekle
+        if 'service_manager' in globals():
+            asyncio.create_task(_graceful_shutdown(service_manager, stop_event))
+    
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, shutdown_handler)
     
     logger.info("Sinyal işleyicileri ayarlandı")
+
+async def _graceful_shutdown(service_manager, stop_event):
+    """
+    Tüm servisleri düzgün bir şekilde kapatmak için asenkron görev.
+    
+    Args:
+        service_manager: Servis yöneticisi
+        stop_event: Durdurma sinyali
+    """
+    try:
+        logger.info("Uygulamayı düzgün bir şekilde kapatma işlemi başlatılıyor...")
+        
+        # Servisleri düzgün bir şekilde durdur
+        await service_manager.stop_services()
+        
+        logger.info("Tüm servisler başarıyla kapatıldı.")
+        
+        # Opsiyonel: Verileri yedekle
+        backup_database()
+        
+        # 2 saniye bekleyip uygulamadan çık
+        await asyncio.sleep(2)
+        
+        # Uygulamadan çık
+        logger.info("Uygulama düzgün bir şekilde kapatılıyor...")
+        loop = asyncio.get_running_loop()
+        loop.stop()
+        
+    except Exception as e:
+        logger.error(f"Düzgün kapatma sırasında hata: {str(e)}")
+        # Hata durumunda da çıkış yap
+        loop = asyncio.get_running_loop()
+        loop.stop()
 
 def clean_session_locks():
     """Tüm oturum kilit dosyalarını temizler."""
@@ -313,57 +395,59 @@ if tdlib_path:
     os.environ['TDJSON_PATH'] = tdlib_path
 
 def setup_database(db):
-    """Veritabanı başlangıç kurulumu."""
+    """
+    Veritabanı bağlantısını ve gerekli tabloları hazırlar.
+    
+    Args:
+        db: Veritabanı bağlantı nesnesi
+    
+    Returns:
+        bool: Başarılı ise True, değilse False
+    """
     try:
-        # Temel tabloları oluştur
-        db.cursor.execute('''
-        CREATE TABLE IF NOT EXISTS groups (
-            group_id INTEGER PRIMARY KEY,
-            name TEXT,
-            join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_message TIMESTAMP,
-            message_count INTEGER DEFAULT 0,
-            member_count INTEGER DEFAULT 0,
-            error_count INTEGER DEFAULT 0,
-            last_error TEXT,
-            is_active INTEGER DEFAULT 1,
-            retry_after TEXT,
-            permanent_error INTEGER DEFAULT 0,
-            is_target INTEGER DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
+        # Veritabanı URL'si kontrol et
+        db_url = os.getenv("DB_CONNECTION")
         
-        # Tablonun şu anda varlığını kontrol et
-        db.cursor.execute("PRAGMA table_info(groups)")
-        columns = db.cursor.fetchall()
+        if not db_url or not db_url.startswith("postgresql://"):
+            logger.warning("PostgreSQL bağlantı bilgileri eksik veya geçersiz. Varsayılan ayarlar kullanılacak.")
+            # Varsayılan PostgreSQL bağlantı URL'sini kullan
+            os.environ["DB_CONNECTION"] = "postgresql://postgres:postgres@localhost:5432/telegram_bot"
+            db_url = os.environ["DB_CONNECTION"]
         
-        # Bazı sütunlar eksik mi kontrol et ve ekle
-        column_names = [col[1] for col in columns]
-        
-            # retry_after sütunu kontrol
-        if 'retry_after' not in column_names:
-            db.cursor.execute("ALTER TABLE groups ADD COLUMN retry_after TEXT")
-            logger.info("Grup tablosu retry_after sütunu eklendi")
+        # PostgreSQL bağlantı parametrelerini ayrıştır
+        try:
+            url = urlparse(db_url)
+            db_name = url.path[1:]  # / işaretini kaldır
+            db_user = url.username
+            db_password = url.password
+            db_host = url.hostname
+            db_port = url.port or 5432
             
-            # last_error sütunu kontrol
-        if 'last_error' not in column_names:
-            db.cursor.execute("ALTER TABLE groups ADD COLUMN last_error TEXT")
-            logger.info("Grup tablosu last_error sütunu eklendi")
+            logger.info(f"PostgreSQL bağlantı detayları: {db_host}:{db_port}/{db_name}")
+        except Exception as e:
+            logger.error(f"PostgreSQL bağlantı URL'si ayrıştırma hatası: {str(e)}")
+            logger.warning("Varsayılan bağlantı detayları kullanılacak.")
+            
+        logger.info("PostgreSQL veritabanı bağlantısı kuruluyor...")
         
-        # permanent_error sütunu kontrol
-        if 'permanent_error' not in column_names:
-            db.cursor.execute("ALTER TABLE groups ADD COLUMN permanent_error INTEGER DEFAULT 0")
-            logger.info("Grup tablosu permanent_error sütunu eklendi")
+        # Bağlantıyı başlat
+        asyncio.create_task(db.connect())
         
-        # Değişiklikleri kaydet
-        db.conn.commit()
+        # Tabloları oluştur
+        asyncio.create_task(db.create_tables())
+        asyncio.create_task(db.create_user_profile_tables())
         
-        logger.info("Veritabanı tabloları başarıyla oluşturuldu")
+        # Migrasyonları çalıştır - eksik tablolar için (messages, mining_data, mining_logs)
+        logger.info("Veritabanı migrasyonları çalıştırılıyor...")
+        asyncio.create_task(db.run_migrations())
+        
+        logger.info("PostgreSQL veritabanı başarıyla yapılandırıldı.")
         return True
+        
     except Exception as e:
-        logger.error(f"Veritabanı kurulum hatası: {str(e)}")
+        logger.error(f"PostgreSQL veritabanı kurulum hatası: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         return False
 
 # Session string'ini veritabanından alır veya yeni oluşturur
@@ -482,8 +566,67 @@ async def setup_telegram_client(db):
         
         if use_string_session:
             try:
-                # Session string'i almayı dene
-                session_string = await get_or_create_session_string(db)
+                # Session string'i veritabanından almayı dene
+                session_string = None
+                try:
+                    # Her sorgu için yeni bir cursor oluştur
+                    query = "SELECT value FROM settings WHERE key = 'session_string'"
+                    result = await db.fetchone(query)
+                    
+                    if result and result[0]:
+                        session_string = result[0]
+                        logger.info("Session string veritabanından alındı.")
+                except Exception as db_error:
+                    logger.error(f"Session string alınırken veritabanı hatası: {str(db_error)}")
+                
+                if not session_string:
+                    # Session string yoksa yeni oturum oluştur
+                    logger.info("Session string bulunamadı, yeni oluşturuluyor...")
+                    
+                    # Telefon numarasını .env'den almayı dene
+                    phone = os.getenv('PHONE')
+                    
+                    if not phone:
+                        # Eğer .env'de telefon numarası yoksa kullanıcıdan iste
+                        logger.warning("PHONE çevre değişkeni bulunamadı, manuel giriş gerekiyor.")
+                        phone = input("Telefon numaranızı girin (+905xxxxxxxxx): ")
+                    else:
+                        logger.info(f"Telefon numarası .env dosyasından alındı: {phone}")
+                    
+                    client = TelegramClient(
+                        StringSession(), 
+                        api_id, 
+                        api_hash,
+                        device_model="Telegram Bot",
+                        system_version="Python Telethon",
+                        app_version="1.0"
+                    )
+                    
+                    await client.connect()
+                    await client.send_code_request(phone)
+                    code = input("Doğrulama kodunu girin: ")
+                    
+                    try:
+                        await client.sign_in(phone, code)
+                        logger.info("Giriş başarılı! Oturum bilgileri kaydedildi.")
+                    except SessionPasswordNeededError:
+                        password = input("İki faktörlü doğrulama şifrenizi girin: ")
+                        await client.sign_in(password=password)
+                        logger.info("Giriş başarılı! Oturum bilgileri kaydedildi.")
+                    
+                    # Session string'i al ve kaydet
+                    session_string = client.session.save()
+                    
+                    # Veritabanına kaydet
+                    try:
+                        query = "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+                        await db.execute(query, ("session_string", session_string))
+                        logger.info("Yeni session string veritabanına kaydedildi.")
+                        logger.info("Bundan sonraki oturumlarda tekrar giriş yapmanız gerekmeyecek.")
+                    except Exception as insert_error:
+                        logger.error(f"Session string kaydedilirken hata: {str(insert_error)}")
+                    
+                    return client
                 
                 # Telethon istemcisini oluştur - StringSession kullanarak
                 client = TelegramClient(
@@ -541,43 +684,51 @@ async def setup_telegram_client(db):
             if not await client.is_user_authorized():
                 logger.error("İstemci yetkili değil, manuel oturum açmayı deneyeceğiz.")
                 
-                # Manuel oturum açma işlemi
+                # Telefon numarasını .env'den almayı dene
                 phone = os.getenv('PHONE')
-                if phone:
-                    try:
-                        await client.send_code_request(phone)
-                        logger.info(f"Doğrulama kodu gönderildi: {phone}")
-                        code = input("Doğrulama kodunu girin: ")
-                        
-                        try:
-                            await client.sign_in(phone, code)
-                        except SessionPasswordNeededError:
-                            password = input("İki faktörlü doğrulama şifrenizi girin: ")
-                            await client.sign_in(password=password)
-                            
-                        # Yetkilendirmeyi kontrol et
-                        if await client.is_user_authorized():
-                            me = await client.get_me()
-                            if me:
-                                logger.info(f"Manuel oturum açma başarılı: {me.first_name} (@{me.username})")
-                                
-                                # Session string'i kaydet
-                                session_string = client.session.save()
-                                db.cursor.execute(
-                                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-                                    ("session_string", session_string)
-                                )
-                                db.conn.commit()
-                                logger.info("Session string başarıyla kaydedildi")
-                                return client
-                            else:
-                                logger.error("Kullanıcı bilgisi alınamadı")
-                                raise ValueError("Kullanıcı bilgisi alınamadı")
-                    except Exception as auth_error:
-                        logger.error(f"Manuel oturum açma hatası: {str(auth_error)}")
-                        raise ValueError("Oturum açma başarısız")
+                
+                if not phone:
+                    # Eğer .env'de telefon numarası yoksa kullanıcıdan iste
+                    logger.warning("PHONE çevre değişkeni bulunamadı, manuel giriş gerekiyor.")
+                    phone = input("Telefon numaranızı girin (+905xxxxxxxxx): ")
                 else:
-                    raise ValueError("PHONE değişkeni tanımlanmamış, manuel oturum açılamıyor")
+                    logger.info(f"Telefon numarası .env dosyasından alındı: {phone}")
+                
+                try:
+                    await client.send_code_request(phone)
+                    logger.info(f"Doğrulama kodu gönderildi: {phone}")
+                    code = input("Doğrulama kodunu girin: ")
+                    
+                    try:
+                        await client.sign_in(phone, code)
+                        logger.info("Giriş başarılı! Oturum bilgileri kaydedildi.")
+                    except SessionPasswordNeededError:
+                        password = input("İki faktörlü doğrulama şifrenizi girin: ")
+                        await client.sign_in(password=password)
+                        logger.info("Giriş başarılı! Oturum bilgileri kaydedildi.")
+                        
+                    # Yetkilendirmeyi kontrol et
+                    if await client.is_user_authorized():
+                        me = await client.get_me()
+                        if me:
+                            logger.info(f"Manuel oturum açma başarılı: {me.first_name} (@{me.username})")
+                            logger.info("Bundan sonraki oturumlarda tekrar giriş yapmanız gerekmeyecek.")
+                            
+                            # Session string'i kaydet
+                            session_string = client.session.save()
+                            try:
+                                query = "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+                                await db.execute(query, ("session_string", session_string))
+                                logger.info("Session string başarıyla kaydedildi")
+                            except Exception as db_error:
+                                logger.error(f"Session string kaydedilirken veritabanı hatası: {str(db_error)}")
+                            return client
+                        else:
+                            logger.error("Kullanıcı bilgisi alınamadı")
+                            raise ValueError("Kullanıcı bilgisi alınamadı")
+                except Exception as auth_error:
+                    logger.error(f"Manuel oturum açma hatası: {str(auth_error)}")
+                    raise ValueError("Oturum açma başarısız")
             else:
                 me = await client.get_me()
                 if me:
@@ -586,11 +737,8 @@ async def setup_telegram_client(db):
                     # Başarıyla bağlandıysa, string session'ı kaydet
                     try:
                         session_string = client.session.save()
-                        db.cursor.execute(
-                            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-                            ("session_string", session_string)
-                        )
-                        db.conn.commit()
+                        query = "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+                        await db.execute(query, ("session_string", session_string))
                         logger.info("Session string başarıyla kaydedildi")
                     except Exception as e2:
                         logger.error(f"Session string kaydedilirken hata: {str(e2)}")
@@ -607,9 +755,43 @@ async def setup_telegram_client(db):
         raise
 
 async def main():
-    """Ana uygulama fonksiyonu."""
+    """Ana uygulama başlangıç noktası"""
     try:
-        # Çevre değişkenlerini yükle
+        # Banner'ı göster
+        print_banner()
+        
+        # Redis bağlantısını kontrol et
+        try:
+            import redis
+            redis_client = redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
+            redis_client.ping()
+            print("✅ Redis bağlantısı başarılı")
+        except Exception as e:
+            print(f"❌ Redis bağlantı hatası: {str(e)}")
+            print("⚠️ Celery görevleri çalışmayacak!")
+        
+        # Celery worker'ı başlat
+        try:
+            celery_worker = subprocess.Popen(
+                ['celery', '-A', 'bot.celery_app', 'worker', '--loglevel=info'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            print("✅ Celery worker başlatıldı")
+        except Exception as e:
+            print(f"❌ Celery worker başlatma hatası: {str(e)}")
+        
+        # Celery beat'i başlat
+        try:
+            celery_beat = subprocess.Popen(
+                ['celery', '-A', 'bot.celery_app', 'beat', '--loglevel=info'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            print("✅ Celery beat başlatıldı")
+        except Exception as e:
+            print(f"❌ Celery beat başlatma hatası: {str(e)}")
+        
         load_dotenv()
         
         # Gerekli dizinleri kontrol et ve oluştur
@@ -626,24 +808,29 @@ async def main():
             os.makedirs(directory, exist_ok=True)
             logger.info(f"Dizin kontrolü yapıldı: {directory}")
         
-        # SQLite senkronizasyon modunu ve timeout'u ayarla
-        sqlite3.connect(':memory:').execute('PRAGMA synchronous = NORMAL')
-        sqlite3.connect(':memory:').execute('PRAGMA busy_timeout = 30000')
-        
         # Veritabanı bağlantısı kur
-        db_path = os.getenv("DB_PATH", "data/users.db")
+        # PostgreSQL bağlantı bilgilerini .env'den al
+        db_connection = os.getenv("DB_CONNECTION")
         
-        # Veritabanı dizininin varlığını kontrol et
-        db_dir = os.path.dirname(db_path)
-        if not os.path.exists(db_dir):
-            os.makedirs(db_dir, exist_ok=True)
-            logger.info(f"Veritabanı dizini oluşturuldu: {db_dir}")
+        # Bağlantı URL'si kontrolü
+        if not db_connection or not db_connection.startswith("postgresql://"):
+            logger.error("PostgreSQL bağlantı bilgileri bulunamadı veya geçersiz. DB_CONNECTION çevre değişkeni ayarlanmalıdır (postgresql://...)")
+            # Varsayılan bağlantıyı kullan
+            db_connection = "postgresql://postgres:postgres@localhost:5432/telegram_bot"
+            logger.info(f"Varsayılan PostgreSQL bağlantısı kullanılıyor: {db_connection.split('@')[1].split('/')[0]}")
+        else:
+            logger.info(f"PostgreSQL bağlantısı kullanılıyor: {db_connection.split('@')[1].split('/')[0]}")
             
-        logger.info(f"Veritabanı bağlantısı kuruluyor: {db_path}")
+        # PostgreSQL veritabanını başlat
+        db = Database(db_url=db_connection)
         
         try:
-            db = Database(db_path=db_path)
-            await db.connect()
+            # Veritabanına bağlan
+            connection_success = await db.connect()
+            
+            if not connection_success:
+                logger.error("PostgreSQL veritabanı bağlantısı başarısız oldu. Uygulama durduruluyor.")
+                return
             
             # Veritabanı tablolarını oluştur
             await db.create_tables()
@@ -697,7 +884,10 @@ async def main():
                 add_signal_handlers(stop_event)
                 
                 # ServiceFactory ve ServiceManager kullanarak servisleri yönet
-                service_factory = ServiceFactory()
+                service_factory = ServiceFactory(client, config, db, stop_event)
+                
+                # Service manager'ı global değişken olarak tanımla
+                global service_manager
                 service_manager = ServiceManager(service_factory, client, config, db, stop_event)
                 
                 # Aktif servisleri belirle - tüm servisleri dahil ediyoruz
@@ -711,7 +901,9 @@ async def main():
                     "promo",         # PromoService
                     "announcement",  # AnnouncementService
                     "datamining",    # DataMiningService
-                    "message"        # MessageService
+                    "message",       # MessageService
+                    "analytics",     # AnalyticsService
+                    "error"          # ErrorService
                 ]
                 
                 # Servisleri oluştur ve kaydet
@@ -749,49 +941,107 @@ async def main():
         finally:
             # Veritabanı bağlantısını kapat
             if 'db' in locals():
-                await db.close()
-                logger.info("Veritabanı bağlantısı kapatıldı.")
+                try:
+                    await db.disconnect()
+                    logger.info("Veritabanı bağlantısı kapatıldı.")
+                except Exception as e:
+                    logger.error(f"Veritabanı bağlantısı kapatılırken hata: {str(e)}")
             
             # İstemciyi kapat
             if 'client' in locals():
-                await client.disconnect()
-                logger.info("Telegram istemcisi kapatıldı.")
+                try:
+                    await client.disconnect()
+                    logger.info("Telegram istemcisi kapatıldı.")
+                except Exception as e:
+                    logger.error(f"Telegram istemcisi kapatılırken hata: {str(e)}")
     
     except Exception as e:
-        logger.critical(f"Kritik hata: {e}")
-        import traceback
-        logger.critical(traceback.format_exc())
+        print(f"❌ Ana uygulama hatası: {str(e)}")
+        logging.error(f"Ana uygulama hatası: {str(e)}")
+        sys.exit(1)
+    finally:
+        # Celery worker ve beat'i temizle
+        try:
+            if 'celery_worker' in locals():
+                celery_worker.terminate()
+            if 'celery_beat' in locals():
+                celery_beat.terminate()
+        except Exception as e:
+            print(f"❌ Celery temizleme hatası: {str(e)}")
 
-# Düzenli yedekleme yapın
+# Veritabanı yedekleme fonksiyonu
 def backup_database():
-    backup_dir = "backups"
-    os.makedirs(backup_dir, exist_ok=True)
-    
-    # SQLite için
-    sqlite_path = "data/users.db"
-    if os.path.exists(sqlite_path):
-        backup_path = f"{backup_dir}/users_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-        shutil.copy2(sqlite_path, backup_path)
-    
-    # PostgreSQL için
-    if os.getenv("DB_CONNECTION", "").startswith("postgresql"):
-        # postgresql://username:password@hostname:port/database
-        db_url = os.getenv("DB_CONNECTION", "")
-        if db_url:
-            # URL'den bilgileri ayıkla
-            parts = db_url.replace("postgresql://", "").split("@")
+    """PostgreSQL veritabanının yedeklemesini alır."""
+    try:
+        # .env'den veritabanı bilgilerini al
+        db_url = os.getenv("DB_CONNECTION")
+        
+        if not db_url or not db_url.startswith("postgresql://"):
+            logger.warning("PostgreSQL bağlantı bilgileri eksik veya geçersiz, yedekleme yapılamıyor.")
+            return False
             
-            if len(parts) == 2:
-                auth, connection = parts
-                user_pass = auth.split(":")
-                host_db = connection.split("/")
-                
-                user = user_pass[0] if len(user_pass) > 0 else ""
-                host = host_db[0].split(":")[0] if len(host_db) > 0 else "localhost"
-                dbname = host_db[1] if len(host_db) > 1 else ""
-                
-                backup_file = f"{backup_dir}/pg_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sql"
-                subprocess.run(["pg_dump", "-U", user, "-h", host, "-d", dbname, "-f", backup_file])
+        # Bağlantı bilgilerini ayrıştır
+        url_parts = db_url.replace("postgresql://", "").split("@")
+        if len(url_parts) != 2:
+            logger.warning("Geçersiz PostgreSQL bağlantı URL'si, yedekleme yapılamıyor.")
+            return False
+            
+        auth = url_parts[0].split(":")
+        server = url_parts[1].split("/")
+        
+        if len(auth) != 2 or len(server) != 2:
+            logger.warning("PostgreSQL bağlantı bilgileri eksik, yedekleme yapılamıyor.")
+            return False
+            
+        username = auth[0]
+        password = auth[1]
+        host_port = server[0].split(":")
+        host = host_port[0]
+        port = host_port[1] if len(host_port) > 1 else "5432"
+        database = server[1]
+        
+        # Yedekleme dizinini oluştur
+        backup_dir = "runtime/database/backups"
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        # Yedek dosya adını oluştur
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = f"{backup_dir}/postgres_{database}_{timestamp}.sql"
+        
+        # pg_dump komutu ile yedekleme yap
+        cmd = [
+            "pg_dump",
+            "-h", host,
+            "-p", port,
+            "-U", username,
+            "-d", database,
+            "-f", backup_file
+        ]
+        
+        # Ortam değişkenine şifreyi ekle
+        env = os.environ.copy()
+        env["PGPASSWORD"] = password
+        
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            logger.info(f"PostgreSQL veritabanı başarıyla yedeklendi: {backup_file}")
+            
+            # Eski yedekleri temizle (son 5 yedeği tut)
+            all_backups = sorted([f for f in os.listdir(backup_dir) if f.startswith(f"postgres_{database}_")])
+            if len(all_backups) > 5:
+                for old_backup in all_backups[:-5]:
+                    os.remove(os.path.join(backup_dir, old_backup))
+                    logger.info(f"Eski yedek silindi: {old_backup}")
+            
+            return True
+        else:
+            logger.error(f"PostgreSQL yedekleme hatası: {result.stderr}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Veritabanı yedekleme hatası: {str(e)}")
+        return False
 
 if __name__ == "__main__":
     try:
