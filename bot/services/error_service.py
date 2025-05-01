@@ -146,23 +146,34 @@ class ErrorService(BaseService):
                 os.makedirs(category_path, exist_ok=True)
             
             # Konfigürasyondan ayarları yükle (varsa)
-            if self.config and hasattr(self.config, "get"):
-                if 'error_service' in self.config:
-                    error_config = self.config['error_service']
-                    self._load_config_values(error_config)
+            if hasattr(self.config, 'get_setting'):
+                # Doğrudan get_setting ile ayarları yükle
+                self.max_retained_errors = self.config.get_setting('error_service.max_retained_errors', 1000)
+                self.error_log_path = self.config.get_setting('error_service.error_log_path', self.error_log_path)
+                self.notify_critical = self.config.get_setting('error_service.notify_critical', True)
+                self.notify_error = self.config.get_setting('error_service.notify_error', True)
+                self.alert_threshold = self.config.get_setting('error_service.alert_threshold', 5)
+                self.alert_window = self.config.get_setting('error_service.alert_window', 300)
+                
+                # Kategori bazlı eşikler
+                category_thresholds = self.config.get_setting('error_service.category_thresholds', None)
+                if category_thresholds:
+                    self.category_thresholds = category_thresholds
+                
+                # Kategori bazlı zaman pencereleri
+                category_windows = self.config.get_setting('error_service.category_windows', None)
+                if category_windows:
+                    self.category_windows = category_windows
             elif isinstance(self.config, dict) and 'error_service' in self.config:
+                # Dict yapısından yükleme
                 error_config = self.config['error_service']
                 self._load_config_values(error_config)
-            
-            # Mevcut hata kayıtlarını yükle
-            await self._load_error_records()
             
             self.initialized = True
             logger.info("ErrorService başlatıldı")
             return True
-            
         except Exception as e:
-            logger.error(f"ErrorService başlatılırken hata: {str(e)}", exc_info=True)
+            logger.error(f"ErrorService başlatılırken hata: {e}")
             return False
     
     async def start(self) -> bool:

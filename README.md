@@ -253,3 +253,126 @@ await event_service.emit("message_received",
                         data={"user_id": user_id, "message": message},
                         source="message_service")
 ```
+
+# Telegram Bot v3.6.0
+
+## Yeni Özellikler (v3.6.0)
+
+### Grup Analitik Sistemi
+
+Bu sürümle birlikte kapsamlı bir grup analitik sistemi eklenmiştir. Bu sistem sayesinde:
+
+- Grup aktivite ve etkileşim metrikleri (mesaj sayısı, üye sayısı, aktif kullanıcılar) takip edilebilir
+- En aktif gruplar, en hızlı büyüyen gruplar ve en etkileşimli gruplar tespit edilebilir
+- Kullanıcı etkileşim analizi ve en aktif kullanıcıları tespit edebilir
+- Haftalık detaylı rapor oluşturabilir ve CSV/JSON formatlarında dışa aktarabilir
+
+### Gelişmiş Hata İzleme Sistemi
+
+Hata izleme ve yönetimi geliştirilerek daha kapsamlı hale getirilmiştir:
+
+- Hataları kategorilere ayıran (DATABASE, NETWORK, TELEGRAM_API, GENERAL) sistem
+- Her kategori için özel eşikler ve izleme pencereleri
+- Kategori bazlı log dosyaları ve JSON formatında detaylı kayıt
+- Otomatik hata kategorizasyonu ve istatistik raporlama özellikleri
+
+### Config Adapter Sistemi
+
+Farklı yapılardaki config nesnelerini uyumlu hale getiren adaptör sistemi eklenmiştir:
+
+- Dict yapısındaki, get_setting metodlu veya get metodlu config nesneleri ile uyumlu
+- İç içe yapıya sahip konfigürasyon değerlerini nokta notasyonu ile çekebilme (örn: 'analytics.update_interval')
+- Config nesnesine bağlı hataların giderilmesi
+
+## Kullanım
+
+### Grup Analitikleri
+
+Grup analitiklerine klavye komutlarından 'a' tuşu ile erişebilirsiniz. Bu komut size aşağıdaki seçenekleri sunar:
+
+- **Haftalık Rapor:** Son 7 günün grup aktivite raporunu gösterir
+- **En Aktif Gruplar:** En fazla mesaj aktivitesine sahip grupları listeler
+- **Büyüyen Gruplar:** Üye sayısı hızla artan grupları listeler
+- **İnaktif Gruplar:** Aktivitesi düşük olan grupları belirler
+- **CSV/JSON Dışa Aktarma:** Analitik verilerini dışa aktarır
+
+### Hata İzleme ve Yönetimi
+
+Hata izleme sistemine klavye komutlarından 'e' tuşu ile erişebilirsiniz. Bu komut size aşağıdaki seçenekleri sunar:
+
+- **Tüm Hatalar:** Sistemdeki tüm hataları listeler
+- **Kategori Bazlı Hatalar:** Belirli kategorilerdeki hataları görüntüler
+- **Kritik Hatalar:** Yalnızca kritik seviyedeki hataları gösterir
+- **Çözülmemiş Hatalar:** Henüz çözülmemiş olan hataları listeler
+- **Hata İstatistikleri:** Kategori bazlı hata dağılımını gösterir
+
+## Kurulum ve Yapılandırma
+
+### Gereksinimler
+
+- Python 3.9 veya üzeri
+- PostgreSQL veritabanı
+- Telethon kütüphanesi
+
+### Yapılandırma
+
+Config dosyasına yeni eklenen servisler için ayarları ekleyin:
+
+```json
+{
+  "analytics": {
+    "update_interval": 3600,
+    "max_retained_reports": 30
+  },
+  "error_service": {
+    "max_retained_errors": 1000,
+    "error_log_path": "logs/errors",
+    "notify_critical": true,
+    "notify_error": true,
+    "alert_threshold": 5,
+    "alert_window": 300,
+    "category_thresholds": {
+      "DATABASE": 3, 
+      "TELEGRAM_API": 10,
+      "NETWORK": 5,
+      "GENERAL": 5
+    },
+    "category_windows": {
+      "DATABASE": 600,
+      "TELEGRAM_API": 300,
+      "NETWORK": 300,
+      "GENERAL": 300
+    }
+  }
+}
+```
+
+### Klasör Yapısı
+
+Aşağıdaki klasörlerin mevcut olduğundan emin olun:
+
+```
+logs/
+  errors/
+    database/
+    network/
+    telegram_api/
+    general/
+data/
+  analytics_export/
+```
+
+## Test
+
+Servisleri test etmek için aşağıdaki komutları kullanabilirsiniz:
+
+```bash
+# Config adapter testleri
+python -m unittest test_config_adapter.py
+
+# Servis testleri
+python test_services_enhanced.py
+
+# Entegrasyon testleri
+python integration_test.py
+```

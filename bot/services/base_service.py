@@ -14,6 +14,7 @@ import functools
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
 from abc import ABC, abstractmethod
+from config_helper import ConfigAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -21,61 +22,59 @@ class BaseService(ABC):
     """
     Tüm servisler için temel sınıf.
     
-    Her servis, bu temel sınıftan türetilmelidir. Temel sınıf, tüm servislerde
-    ortak olan işlevselliği sağlar.
+    Bu sınıf, tüm servislerde ortak olan işlevleri sağlar.
+    Her servis bu sınıfı miras almalıdır.
     
     Attributes:
         service_name: Servis adı
-        client: Telethon istemcisi
-        config: Uygulama yapılandırması
+        client: Telegram istemcisi
+        config: Yapılandırma nesnesi
         db: Veritabanı bağlantısı
-        stop_event: Durdurma sinyali için asyncio.Event nesnesi
-        running: Servisin çalışıp çalışmadığını belirtir
-        start_time: Servisin başlangıç zamanı
+        db_pool: Veritabanı bağlantı havuzu
+        stop_event: Durdurma eventi
         initialized: Servisin başlatılıp başlatılmadığını belirtir
+        services: Diğer servislerin referansları
+        _is_running: Servisin çalışıp çalışmadığını belirtir
     """
     
-    def __init__(self, service_name: str, client: Any, config: Any, db: Any, stop_event: asyncio.Event):
+    def __init__(self, service_name=None, client=None, config=None, db=None, stop_event=None):
         """
-        BaseService sınıfının başlatıcısı.
+        BaseService constructor.
         
         Args:
             service_name: Servis adı
-            client: Telethon istemcisi
-            config: Uygulama yapılandırması  
+            client: Telegram istemcisi
+            config: Yapılandırma nesnesi
             db: Veritabanı bağlantısı
-            stop_event: Durdurma sinyali için asyncio.Event nesnesi
+            stop_event: Durdurma eventi
         """
+        self.name = service_name
         self.service_name = service_name
-        self.name = service_name  # Her iki özelliği de ayarlıyoruz - bu tutarsızlık sorununu çözecek
         self.client = client
-        self.config = config
+        # Config nesnesini adaptör ile uyumlu hale getir
+        self.config = ConfigAdapter.adapt_config(config)
         self.db = db
+        self.db_pool = None
         self.stop_event = stop_event
-        self.is_running = False
-        self.start_time = None
         self.initialized = False
+        self.services = {}
+        self._is_running = False
         
     @abstractmethod
     async def initialize(self) -> bool:
         """
-        Temel servisi başlatır.
+        Servisi başlat ve gerekli kaynakları yükle
+        
+        Returns:
+            bool: Başarılı ise True
         """
-        # İstemcinin UserBot mu yoksa Bot mu olduğunu kontrol et (her zaman UserBot olarak ayarla)
-        self._is_user_mode = True
-        
-        # Oturum başlama zamanını kaydet
-        self.start_time = datetime.now()
-        
-        # Durum bilgisi
-        logger.info(f"{self.name} servisi başlatılıyor...")
-        
+        self.initialized = True
         return True
         
     @abstractmethod
     async def start(self) -> bool:
         """
-        Servisi başlatır.
+        Servisi başlat
         
         Returns:
             bool: Başarılı ise True
@@ -83,53 +82,52 @@ class BaseService(ABC):
         if not self.initialized:
             await self.initialize()
             
-        self.is_running = True
-        self.start_time = datetime.now()
-        logger.info(f"{self.service_name} servisi başlatıldı.")
+        logger.info(f"{self.name} servisi başlatılıyor...")
+        self._is_running = True
+        logger.info(f"{self.name} servisi başlatıldı.")
         return True
         
     @abstractmethod
     async def stop(self) -> None:
         """
-        Servisi güvenli bir şekilde durdurur.
+        Servisi durdur
         
         Returns:
             None
         """
-        # Önce durum değişkenini güncelle
-        self.is_running = False
+        logger.info(f"{self.name} servisi durduruluyor...")
+        self._is_running = False
+        logger.info(f"{self.name} servisi durduruldu.")
         
-        # Durdurma sinyalini ayarla (varsa)
-        if hasattr(self, 'stop_event') and self.stop_event:
-            self.stop_event.set()
-            
-        # Diğer durdurma sinyallerini de kontrol et
-        if hasattr(self, 'shutdown_event'):
-            self.shutdown_event.set()
+    def is_running(self) -> bool:
+        """
+        Servisin çalışıp çalışmadığını kontrol et
         
-        # Çalışan görevleri iptal et
-        try:
-            service_tasks = [task for task in asyncio.all_tasks() 
-                        if (task.get_name().startswith(f"{self.name}_task_") or
-                            task.get_name().startswith(f"{self.service_name}_task_")) and 
-                        not task.done() and not task.cancelled()]
-                        
-            for task in service_tasks:
-                task.cancel()
-                
-            # Kısa bir süre bekle
-            try:
-                await asyncio.sleep(0.5)
-            except asyncio.CancelledError:
-                pass
-                
-            # İptal edilen görevlerin tamamlanmasını kontrol et
-            if service_tasks:
-                await asyncio.wait(service_tasks, timeout=2.0)
-        except Exception as e:
-            logger.error(f"{self.service_name} görevleri iptal edilirken hata: {str(e)}")
+        Returns:
+            bool: Çalışıyorsa True
+        """
+        return self._is_running
+        
+    def set_services(self, services: Dict[str, Any]) -> None:
+        """
+        Diğer servisleri ayarla
+        
+        Args:
+            services: Servis adı -> Servis nesnesi eşleşmesi
+        """
+        self.services = services
+        
+    def get_service(self, service_name: str) -> Optional[Any]:
+        """
+        Belirli bir servisi döndür
+        
+        Args:
+            service_name: Servis adı
             
-        logger.info(f"{self.service_name} servisi durduruldu.")
+        Returns:
+            İstenen servis veya None
+        """
+        return self.services.get(service_name)
         
     async def run(self) -> None:
         """
@@ -142,7 +140,7 @@ class BaseService(ABC):
         """
         try:
             while not self.stop_event.is_set():
-                if not self.is_running:
+                if not self._is_running:
                     await asyncio.sleep(1)
                     continue
                     
@@ -151,7 +149,7 @@ class BaseService(ABC):
                 
         except Exception as e:
             logger.error(f"{self.name} servisi çalışırken hata: {str(e)}")
-            self.is_running = False
+            self._is_running = False
             
     async def get_status(self) -> Dict[str, Any]:
         """
@@ -162,7 +160,7 @@ class BaseService(ABC):
         """
         return {
             'name': self.service_name,
-            'running': self.is_running,
+            'running': self._is_running,
             'uptime': (datetime.now() - self.start_time).total_seconds() if self.start_time else 0,
             'start_time': self.start_time.isoformat() if self.start_time else None,
             'last_error': None
@@ -211,16 +209,6 @@ class BaseService(ABC):
             else:
                 raise  # Diğer durumlarda hatayı yeniden fırlat
 
-    def set_services(self, services: Dict[str, Any]) -> None:
-        """
-        Diğer servislere referansları ayarlar.
-        
-        Args:
-            services: Servis adı -> Servis nesnesi eşleşmesi
-        """
-        self.services = services
-        logger.debug(f"{self.name} servisi diğer servislere bağlandı")
-        
     def connect_services(self, services: Dict[str, Any]) -> None:
         """
         Diğer servislere referansları ayarlar (set_services ile aynı işlevi görür).
@@ -258,7 +246,7 @@ class BaseService(ABC):
         
     def is_active(self):
         """Servisin aktif olup olmadığını kontrol eder"""
-        return self.is_running
+        return self._is_running
 
 class SomeService(BaseService):
     def __init__(self, client, config, db, stop_event=None):

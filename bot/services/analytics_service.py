@@ -56,18 +56,18 @@ class AnalyticsService(BaseService):
             logger.info("AnalyticsService başlatılıyor...")
             
             # Konfigürasyondan güncelleme aralığını yükle (varsa)
-            if self.config and hasattr(self.config, "get"):
-                if 'analytics' in self.config:
-                    self.update_interval = self.config['analytics'].get('update_interval', 3600)
+            if hasattr(self.config, 'get_setting'):
+                self.update_interval = self.config.get_setting('analytics.update_interval', 3600)
+                self.max_retained_reports = self.config.get_setting('analytics.max_retained_reports', 30)
             elif isinstance(self.config, dict) and 'analytics' in self.config:
                 self.update_interval = self.config['analytics'].get('update_interval', 3600)
+                self.max_retained_reports = self.config['analytics'].get('max_retained_reports', 30)
             
             self.initialized = True
             logger.info("AnalyticsService başlatıldı")
             return True
-            
         except Exception as e:
-            logger.error(f"AnalyticsService başlatılırken hata: {str(e)}", exc_info=True)
+            logger.error(f"AnalyticsService başlatılırken hata: {e}")
             return False
     
     async def start(self) -> bool:
