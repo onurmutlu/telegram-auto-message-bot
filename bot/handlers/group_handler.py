@@ -1282,3 +1282,67 @@ class GroupHandler:
         except Exception as e:
             logger.error(f"Rate limiter sıfırlanırken hata: {str(e)}")
             await message.reply("Rate limiter sıfırlanırken bir hata oluştu.")
+
+    async def send_message(self, group_id, message):
+        """
+        Belirtilen grupa doğrudan mesaj gönderir.
+        MessageService'ten çağrılır.
+        
+        Args:
+            group_id: Grup ID'si
+            message: Gönderilecek mesaj içeriği
+            
+        Returns:
+            bool: Başarılı ise True
+        """
+        try:
+            # Önce grup nesnesi al - entity'yi önce hazırla
+            try:
+                group_entity = await self.client.get_entity(group_id)
+            except Exception as e:
+                self.logger.error(f"Grup entity alınamadı: {group_id} - {str(e)}")
+                return False
+                
+            # Mesajı gönder
+            self.logger.info(f"📨 '{getattr(group_entity, 'title', group_id)}' grubuna mesaj gönderiliyor...")
+            
+            await self.client.send_message(
+                group_entity,
+                message,
+                link_preview=False,
+                silent=True,
+                clear_draft=False
+            )
+            
+            # İstatistikleri güncelle
+            self.sent_count += 1
+            self.total_sent += 1
+            self.processed_groups.add(group_id)
+            self.last_message_time = datetime.now()
+            self.last_sent_time[group_id] = datetime.now()
+            
+            # Veritabanı istatistiklerini güncelle
+            if hasattr(self.db, 'update_group_stats'):
+                group_title = getattr(group_entity, 'title', f"Group {group_id}")
+                asyncio.create_task(self._update_group_stats(group_id, group_title))
+                
+            self.logger.info(f"✅ Mesaj gönderildi: {getattr(group_entity, 'title', group_id)}")
+            return True
+            
+        except errors.FloodWaitError as e:
+            wait_time = e.seconds
+            self.logger.warning(f"⚠️ Flood wait hatası: {wait_time}s bekleniyor (Grup {group_id})")
+            # Flood limiti durumunu bildirmek için event gönder
+            if hasattr(self, 'event_service') and self.event_service:
+                await self.event_service.emit_event(
+                    'flood_wait_error', 
+                    {'group_id': group_id, 'wait_time': wait_time}
+                )
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"⚠️ Grup mesaj hatası: {group_id} - {str(e)}")
+            # Veritabanında işaretle
+            if hasattr(self.db, 'mark_group_error'):
+                self.db.mark_group_error(group_id, str(e))
+            return False

@@ -640,6 +640,25 @@ class ServiceManager:
                     
         return all_success
     
+    async def stop_services(self) -> None:
+        """
+        Tüm servisleri durdurur. 
+        Bu metod eski kod tabanı ile uyumluluk içindir ve stop_all_services'i çağırır.
+        
+        Returns:
+            bool: Tümü başarılı ise True
+        """
+        # Stop event'i ayarla
+        self.stop_event.set()
+        
+        # Tüm servisleri durdur
+        try:
+            logger.info("Servisler durduruluyor. Sıra: " + ", ".join(self.dependency_graph.get_stop_order()))
+            return await self.stop_all_services()
+        except Exception as e:
+            logger.error(f"Servisleri durdururken hata: {str(e)}")
+            return False
+    
     async def dependency_check(self, print_graph=False):
         """
         Servis bağımlılıklarını kontrol et
