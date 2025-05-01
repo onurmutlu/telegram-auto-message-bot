@@ -4,6 +4,71 @@
 
 Bu belge, Telegram Auto Message Bot'un tüm önemli değişikliklerini içerir.
 
+## [3.6.0] - 2025-06-10
+
+### Grup Analitik Sistemi Geliştirmeleri
+- **Detaylı Grup Analizi**: Grup aktivitelerini ve etkileşimlerini izleyen ve raporlayan kapsamlı sistem
+- **Etkileşim Metrikleri**: Mesaj sayısı, üye sayısı, aktif kullanıcı sayısı, büyüme oranı takibi
+- **Performans Analizi**: En aktif gruplar, en hızlı büyüyen gruplar, en yüksek etkileşimli gruplar
+- **Kullanıcı Analizi**: En aktif kullanıcıların tespiti ve etkileşim istatistikleri
+- **Aktivite Trendleri**: Grupların zaman içindeki aktivite analizleri ve görselleştirmeleri
+- **Haftalık Rapor Sistemi**: Hem grup bazında hem genel özet olarak detaylı raporlar
+- **Veri Dışa Aktarımı**: Analitik verilerini JSON ve CSV formatlarında dışa aktarma
+
+### Hata İzleme İyileştirmeleri
+- **Kategori Bazlı Hata Sınıflandırma**: Hataları DATABASE, NETWORK, TELEGRAM_API, GENERAL gibi kategorilere ayırma
+- **Farklılaştırılmış Eşik ve İzleme Pencereleri**: Her kategori için ayrı hata eşikleri ve izleme pencereleri
+- **Gelişmiş Hata Kayıt Sistemi**: Kategoriye göre ayrı log dosyaları ve detaylı hata bilgileri
+- **Otomatik Hata Kategorize Etme**: Hata mesajı ve yığın izleri (stack trace) analizine dayalı otomatik kategorizasyon
+- **Kategori Bazlı İstatistikler**: Şiddet ve kategoriye göre ayrıntılı hata istatistikleri
+- **Uyarı Sistemi**: Eşik aşımlarında kategoriye özel uyarılar
+
+## [3.5.4] - 2025-05-05
+
+### Veritabanı Performans İyileştirmeleri
+- **PostgreSQL Connection Pooling**: Bağlantı havuzu ile performans ve kaynakların verimli kullanımı sağlandı
+- **SQLAlchemy Entegrasyonu**: Hem senkron hem asenkron SQLAlchemy kullanımı için ORM desteği
+- **Gelişmiş İndeksleme Stratejisi**: Sorgu performansını iyileştiren kapsamlı indeksler eklendi
+- **BigInt Dönüşümü ve Kontrolü**: Telegram ID'leri için BigInteger kontrolü ve dönüşümü
+- **Veritabanı Optimizasyon Fonksiyonları**: VACUUM, ANALYZE ve indeks bakımı için fonksiyonlar
+
+### Servis Mimarisi İyileştirmeleri
+- **Event-Tabanlı Mimari**: Servisler arası iletişim için EventService ve EventBus eklendi
+- **Servis Bağımlılık Grafiği**: Servislerin başlatma ve durdurma sırasını otomatik hesaplayan sistem
+- **Güçlendirilmiş Servis Yönetimi**: Servis durumları, başarısızlık kurtarma ve yeniden başlatma mekanizmaları
+- **Döngüsel Bağımlılık Tespiti**: Hatalı bağımlılık tanımlarını otomatik tespit eden fonksiyonlar
+- **Servis Yaşam Döngüsü Olayları**: Servis başlatma, durdurma ve hata durumları için olay bildirimleri
+
+## [3.5.3] - 2025-05-01
+
+### Düzeltmeler
+- **Group Members ON CONFLICT Hatası**: `group_members` tablosunda unique constraint eksikliği sorunu çözüldü. `user_id` ve `group_id` için bir unique constraint eklenerek "there is no unique or exclusion constraint matching the ON CONFLICT specification" hatası giderildi.
+- **Veritabanı Şema Güncellemesi**: `GroupMember` sınıfına `UniqueConstraint` eklenerek şema güncellemesi yapıldı.
+- **fix_group_members_constraint.py**: Tekrarlayan kayıtları temizleyen ve unique constraint ekleyen betik oluşturuldu.
+
+## [3.5.2] - 2025-04-20
+
+### Eklenen Özellikler
+- **ServiceManager Geliştirmeleri**: Servis bağımlılık yönetimi ve başlatma sırası iyileştirildi
+- **Genişletilmiş Servis Mimarisi**: Tüm servisler modüler yapıya kavuşturuldu
+- **DMService İyileştirmeleri**: Kullanıcılar ile etkileşimde daha gelişmiş seçenekler
+- **Kullanıcı Profil Analizi v2**: Gelişmiş istatistik ve etkileşim takibi
+- **PostgreSQL Optimizasyonları**: Veritabanı sorgularında performans artışı
+
+### İyileştirmeler
+- **PostgreSQL Geçişi Tamamlandı**: Tüm veritabanı erişimi PostgreSQL'e optimize edildi
+- **Bağlantı Havuzu**: PostgreSQL için bağlantı havuzu implementasyonu
+- **Servisler Arası İletişim**: Event-tabanlı mimari ile daha güçlü servis koordinasyonu
+- **AdaptiveRateLimiter v2**: Daha hassas ve uyarlanabilir hız sınırlama mekanizması
+- **Error Handling Geliştirmeleri**: Daha tutarlı ve kapsamlı hata yakalama/işleme
+
+### Düzeltmeler
+- **ServiceFactory Bağımlılık Sorunları**: Servisler arasındaki bağımlılık çakışmaları çözüldü
+- **DirectMessageService Init Hatası**: İnit parametrelerindeki eksiklikler giderildi
+- **GroupService DB Path Hatası**: DB_Path değişkeni erişim sorunu düzeltildi
+- **SQLite Kodlarının Temizlenmesi**: Tüm eski SQLite kodları kaldırıldı
+- **Servis Başlatma Sırası**: Bağımlılıkları olan servislerin doğru sırada başlatılması sağlandı
+
 ## [3.5.1] - 2025-04-15 (PLANLANAN)
 
 ### Eklenen Özellikler
