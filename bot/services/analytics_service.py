@@ -56,7 +56,10 @@ class AnalyticsService(BaseService):
             logger.info("AnalyticsService başlatılıyor...")
             
             # Konfigürasyondan güncelleme aralığını yükle (varsa)
-            if self.config and 'analytics' in self.config:
+            if self.config and hasattr(self.config, "get"):
+                if 'analytics' in self.config:
+                    self.update_interval = self.config['analytics'].get('update_interval', 3600)
+            elif isinstance(self.config, dict) and 'analytics' in self.config:
                 self.update_interval = self.config['analytics'].get('update_interval', 3600)
             
             self.initialized = True

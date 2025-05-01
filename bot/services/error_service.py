@@ -146,21 +146,13 @@ class ErrorService(BaseService):
                 os.makedirs(category_path, exist_ok=True)
             
             # Konfigürasyondan ayarları yükle (varsa)
-            if self.config and 'error_service' in self.config:
-                self.max_retained_errors = self.config['error_service'].get('max_retained_errors', 1000)
-                self.error_log_path = self.config['error_service'].get('error_log_path', self.error_log_path)
-                self.notify_critical = self.config['error_service'].get('notify_critical', True)
-                self.notify_error = self.config['error_service'].get('notify_error', True)
-                self.alert_threshold = self.config['error_service'].get('alert_threshold', 5)
-                self.alert_window = self.config['error_service'].get('alert_window', 300)
-                
-                # Yeni: Kategori bazlı eşikleri konfigürasyondan yükle
-                if 'category_thresholds' in self.config['error_service']:
-                    self.category_thresholds.update(self.config['error_service']['category_thresholds'])
-                
-                # Yeni: Kategori bazlı izleme pencerelerini konfigürasyondan yükle
-                if 'category_windows' in self.config['error_service']:
-                    self.category_windows.update(self.config['error_service']['category_windows'])
+            if self.config and hasattr(self.config, "get"):
+                if 'error_service' in self.config:
+                    error_config = self.config['error_service']
+                    self._load_config_values(error_config)
+            elif isinstance(self.config, dict) and 'error_service' in self.config:
+                error_config = self.config['error_service']
+                self._load_config_values(error_config)
             
             # Mevcut hata kayıtlarını yükle
             await self._load_error_records()
@@ -864,3 +856,25 @@ class ErrorService(BaseService):
             'total_errors': sum(c['total'] for c in categories.values()),
             'categories': categories
         } 
+
+    def _load_config_values(self, error_config):
+        """
+        Konfigürasyon değerlerini yükler
+        
+        Args:
+            error_config (dict): Hata servisi konfigürasyonu
+        """
+        self.max_retained_errors = error_config.get('max_retained_errors', 1000)
+        self.error_log_path = error_config.get('error_log_path', self.error_log_path)
+        self.notify_critical = error_config.get('notify_critical', True)
+        self.notify_error = error_config.get('notify_error', True)
+        self.alert_threshold = error_config.get('alert_threshold', 5)
+        self.alert_window = error_config.get('alert_window', 300)
+        
+        # Yeni: Kategori bazlı eşikleri konfigürasyondan yükle
+        if 'category_thresholds' in error_config:
+            self.category_thresholds.update(error_config['category_thresholds'])
+        
+        # Yeni: Kategori bazlı izleme pencerelerini konfigürasyondan yükle
+        if 'category_windows' in error_config:
+            self.category_windows.update(error_config['category_windows']) 
