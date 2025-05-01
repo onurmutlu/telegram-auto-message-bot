@@ -1,5 +1,18 @@
 # Changelog
 
+## v3.6.1 (2023-06-xx)
+
+### Düzeltilen
+
+- **ServiceManager** stop_services metodu eklendi
+  - CLI arayüzünde servisleri durdurma hatası giderildi
+  - Servis kapatma işlemlerinde oluşan hatalar giderildi
+
+- **GroupHandler** send_message metodu eklendi
+  - Gruplara mesaj gönderme işlevi düzeltildi
+  - Grup varlığı kontrolü eklendi
+  - Hata yakalama geliştirildi
+
 ## v3.6.0 (2023-06-xx)
 
 ### Eklenen
