@@ -18,6 +18,7 @@ from typing import Dict, List, Any, Set, Optional, Tuple
 
 from bot.services.base_service import BaseService
 from bot.utils.adaptive_rate_limiter import AdaptiveRateLimiter
+from telethon import errors
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +69,10 @@ class AnnouncementService(BaseService):
         
         # Mesajlar için rate_limiter
         self.rate_limiter = AdaptiveRateLimiter(
-            initial_rate=2,  # Başlangıçta dakikada 2 mesaj
-            period=60,
-            error_backoff=2.0,
-            max_jitter=3.0
+            initial_rate=20,  # Başlangıçta dakikada 20 mesaj (önceden 5 idi)
+            period=10,       # 10 saniyelik periyot (önceden 30 idi)
+            error_backoff=1.1, # Hata durumunda 1.1x yavaşlama (önceden 1.5 idi)
+            max_jitter=1.0   # Maksimum 1 saniyelik rastgele gecikme (önceden 2.0 idi)
         )
         
         # Servisler
@@ -80,30 +81,36 @@ class AnnouncementService(BaseService):
         # Ayarları yükle
         self._load_settings()
         self._load_templates()
+        
+        self.announcements = {}
+        self.stats = {
+            'total_sent': 0,
+            'last_sent': None
+        }
     
     def _load_settings(self):
         """Duyuru servisi ayarlarını yükler."""
         # Yapılandırma dosyasından veya çevre değişkenlerinden
-        self.announcement_interval_minutes = self.config.get_setting('announcement_interval_minutes', 120)
+        self.announcement_interval_minutes = self.config.get_setting('announcement_interval_minutes', 10) # Önceden 60 idi
         
-        # Grup kategorilerine göre gönderim aralıkları (saat)
+                # Grup kategorilerine göre gönderim aralıkları (saat)
         self.cooldown_hours = {
-            'own_groups': 1,           # Kendi gruplarımızda sık mesaj
-            'safe_groups': 4,          # Güvenli gruplarda orta sıklıkta
-            'risky_groups': 12,        # Riskli gruplarda çok nadir
-            'high_traffic_groups': 6   # Yüksek trafikli gruplarda orta-nadir
+            'own_groups': 0.1,        # Kendi gruplarımızda çok sık mesaj
+            'safe_groups': 0.25,      # Güvenli gruplarda sık mesaj
+            'risky_groups': 0.5,      # Riskli gruplarda daha sık
+            'high_traffic_groups': 0.3  # Yüksek trafikli gruplarda sık mesaj
         }
         
         # Kendi gruplarımızı yükle
         own_groups = os.getenv("GROUP_LINKS", "").split(',')
         self.own_groups = [g.strip() for g in own_groups if g.strip()]
         
-        # Grup kategorileri için batchler
+                # Grup kategorileri için batchler
         self.batch_size = {
-            'own_groups': 3,           # Kendi gruplarımızın hepsine
-            'safe_groups': 5,          # Güvenli gruplara toplu
-            'risky_groups': 1,         # Riskli gruplara tek tek
-            'high_traffic_groups': 3   # Yüksek trafikli gruplara orta batch
+            'own_groups': 20,           # Kendi gruplarımızın hepsine
+            'safe_groups': 30,          # Güvenli gruplara toplu
+            'risky_groups': 15,         # Riskli gruplara çoklu
+            'high_traffic_groups': 20   # Yüksek trafikli gruplara toplu
         }
         
         self.debug = self.config.get_setting('debug', False)
@@ -115,22 +122,42 @@ class AnnouncementService(BaseService):
         try:
             # Şablon dosyası
             with open('data/announcements.json', 'r', encoding='utf-8') as f:
-                self.announcement_templates = json.load(f)
+                data = json.load(f)
             
-            # Şablon kontrolleri
-            if not self.announcement_templates:
-                logger.warning("Duyuru şablonları boş! data/announcements.json dosyasını kontrol edin.")
+            # Şablon formatını kontrol et ve yapılandır
+            if isinstance(data, dict):
+                # Yeni format - ID'ye göre şablonlar
+                self.announcement_templates = {}
+                
+                # Şablonları grup tipine göre kategorize et
+                for template_id, template_info in data.items():
+                    if isinstance(template_info, dict) and "group_type" in template_info:
+                        group_type = template_info["group_type"]
+                        category = template_info.get("category", "general")
+                        
+                        # Gerekirse grup tipine ait sözlüğü oluştur
+                        if group_type not in self.announcement_templates:
+                            self.announcement_templates[group_type] = {}
+                        
+                        # Gerekirse kategoriye ait listeyi oluştur
+                        if category not in self.announcement_templates[group_type]:
+                            self.announcement_templates[group_type][category] = []
+                        
+                        # Şablonu ekle
+                        self.announcement_templates[group_type][category].append(template_info["content"])
+                        
+                # Log şablon sayılarını
+                for group_type, categories in self.announcement_templates.items():
+                    for category, templates in categories.items():
+                        logger.debug(f"{group_type} - {category}: {len(templates)} şablon")
+            else:
+                logger.warning("Geçersiz şablon formatı! Sözlük formatı bekleniyor")
                 self.announcement_templates = {
                     "own_groups": {
                         "promotion": ["Grubumuzun yeni özelliklerini denediniz mi? t.me/{}"]
                     }
                 }
                 
-            # Log şablon sayılarını
-            for category, content in self.announcement_templates.items():
-                for msg_type, templates in content.items():
-                    logger.debug(f"{category} - {msg_type}: {len(templates)} şablon")
-                    
         except Exception as e:
             logger.error(f"Duyuru şablonları yüklenirken hata: {str(e)}")
             # Basit varsayılan şablon
@@ -220,7 +247,8 @@ class AnnouncementService(BaseService):
             if hasattr(self.db, 'get_all_groups'):
                 try:
                     groups = await self.db.get_all_groups()  # await kullanımı
-                    return groups  # direkt objeyi dön
+                    if groups:
+                        return groups  # direkt objeyi dön
                 except Exception as e:
                     logger.error(f"get_all_groups hatası: {str(e)}")
             
@@ -228,11 +256,66 @@ class AnnouncementService(BaseService):
             if hasattr(self.db, 'get_groups'):
                 try:
                     groups = await self._run_async_db_method(self.db.get_groups)
-                    return groups
+                    if groups:
+                        return groups
                 except Exception as e:
                     logger.error(f"get_groups hatası: {str(e)}")
             
             # Diğer alternatifler...
+            # Hala grup bulunamadıysa, grupları keşfet
+            logger.info("Veritabanında grup bulunamadı. Grupları keşfetmeye çalışıyorum.")
+            
+            # Grup servisine erişim varsa keşif yap
+            if hasattr(self, 'services') and 'group' in self.services:
+                try:
+                    group_service = self.services['group']
+                    await group_service.discover_groups()
+                    # Keşif sonrası grupları tekrar almayı dene
+                    if hasattr(self.db, 'get_all_groups'):
+                        groups = await self.db.get_all_groups()
+                        if groups:
+                            logger.info(f"Grup keşfi sonrası {len(groups)} grup bulundu.")
+                            return groups
+                except Exception as e:
+                    logger.error(f"Grup keşfi hatası: {str(e)}")
+            
+            # Gruplar hala bulunamadıysa, manuel olarak keşfet
+            try:
+                # Dialog'lardan grupları al
+                groups = []
+                async for dialog in self.client.iter_dialogs():
+                    if dialog.is_group or dialog.is_channel:
+                        entity = dialog.entity
+                        group_id = entity.id
+                        title = entity.title
+                        username = getattr(entity, 'username', None)
+                        
+                        # Grubu kaydet
+                        if hasattr(self.db, 'add_group'):
+                            await self._run_async_db_method(
+                                self.db.add_group,
+                                group_id,
+                                title,
+                                username=username
+                            )
+                        
+                        # Sonuç listesine ekle
+                        groups.append({
+                            'group_id': group_id,
+                            'name': title,
+                            'username': username,
+                            'is_public': username is not None,
+                            'can_send_messages': True
+                        })
+                
+                if groups:
+                    logger.info(f"Manuel keşif sonrası {len(groups)} grup bulundu.")
+                    return groups
+            except Exception as e:
+                logger.error(f"Manuel grup keşfi hatası: {str(e)}")
+            
+            # Hiçbir şekilde grup bulunamazsa boş liste döndür
+            return []
             
         except Exception as e:
             logger.error(f"Grupları alma hatası: {str(e)}")
@@ -274,34 +357,60 @@ class AnnouncementService(BaseService):
     
     async def start(self) -> bool:
         """
-        Duyuru servisini başlatır.
+        Servisi başlatır.
         
         Returns:
             bool: Başarılı ise True
         """
-        if self.running:
-            return True
+        if not self.initialized:
+            await self.initialize()
             
         self.running = True
-        logger.info("Duyuru servisi başlatılıyor...")
-        
-        # Otomatik duyuru görevi
-        asyncio.create_task(self._announcement_loop())
-        
+        self.start_time = datetime.now()
+        logger.info(f"{self.service_name} servisi başlatıldı.")
         return True
     
     async def stop(self) -> None:
         """
-        Duyuru servisini durdurur.
+        Servisi güvenli bir şekilde durdurur.
         
         Returns:
             None
         """
+        # Önce durum değişkenini güncelle
         self.running = False
-        logger.info("Duyuru servisi durduruluyor...")
         
-        # Temel servisin stop metodunu çağır
-        await super().stop()
+        # Durdurma sinyalini ayarla (varsa)
+        if hasattr(self, 'stop_event') and self.stop_event:
+            self.stop_event.set()
+            
+        # Diğer durdurma sinyallerini de kontrol et
+        if hasattr(self, 'shutdown_event'):
+            self.shutdown_event.set()
+        
+        # Çalışan görevleri iptal et
+        try:
+            service_tasks = [task for task in asyncio.all_tasks() 
+                        if (task.get_name().startswith(f"{self.name}_task_") or
+                            task.get_name().startswith(f"{self.service_name}_task_")) and 
+                        not task.done() and not task.cancelled()]
+                        
+            for task in service_tasks:
+                task.cancel()
+                
+            # Kısa bir süre bekle
+            try:
+                await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                pass
+                
+            # İptal edilen görevlerin tamamlanmasını kontrol et
+            if service_tasks:
+                await asyncio.wait(service_tasks, timeout=2.0)
+        except Exception as e:
+            logger.error(f"{self.service_name} görevleri iptal edilirken hata: {str(e)}")
+            
+        logger.info(f"{self.service_name} servisi durduruldu.")
     
     async def _announcement_loop(self):
         """Periyodik duyuru gönderimlerini yönetir."""
@@ -314,8 +423,8 @@ class AnnouncementService(BaseService):
                     if not groups:
                         continue
                         
-                    # Bu kategoriden kaç gruba mesaj göndereceğiz?
-                    batch_count = min(self.batch_size.get(category, 1), len(groups))
+                    # Bu kategoriden kaç gruba mesaj göndereceğiz? (Artırıldı)
+                    batch_count = min(self.batch_size.get(category, 3), len(groups))
                     
                     # Gruba göre duyuru türü seç (promotion, services, showcase, ads)
                     announcement_type = random.choice(['promotion', 'services', 'showcase', 'ads'])
@@ -326,7 +435,7 @@ class AnnouncementService(BaseService):
                         logger.debug(f"{category} kategorisinde uygun grup bulunamadı")
                         continue
                         
-                    # Batch'ten fazla grup varsa random örneklem al
+                    # Batch'ten fazla grup varsa random örneklem al (Artırıldı)
                     selected_groups = random.sample(eligible_groups, min(batch_count, len(eligible_groups)))
                     
                     # Seçilen gruplara mesaj gönder
@@ -336,11 +445,11 @@ class AnnouncementService(BaseService):
                             self.last_group_message[group_id] = datetime.now()
                             self.announcement_count += 1
                             
-                        # Her mesaj arasında biraz bekle
-                        await asyncio.sleep(2 + random.random() * 3)
+                        # Her mesaj arasında neredeyse hiç bekleme
+                        await asyncio.sleep(0.1 + random.random() * 0.2)
                 
-                # Bir sonraki tura kadar bekle
-                interval = self.announcement_interval_minutes * 60
+                # Bir sonraki tura kadar bekle (Aşırı kısaltıldı)
+                interval = (self.announcement_interval_minutes * 60) / 16  # Sekizde bir süre
                 logger.debug(f"Bir sonraki duyuru turu için {interval} saniye bekleniyor")
                 await asyncio.sleep(interval)
                 
@@ -349,7 +458,7 @@ class AnnouncementService(BaseService):
                 break
             except Exception as e:
                 logger.error(f"Duyuru döngüsünde hata: {str(e)}")
-                await asyncio.sleep(300)  # Hata durumunda 5 dakika bekle
+                await asyncio.sleep(60)  # Hata durumunda 1 dakika bekle (Kısaltıldı)
     
     async def _get_eligible_groups(self, category: str) -> List[int]:
         """
@@ -363,7 +472,8 @@ class AnnouncementService(BaseService):
         """
         eligible_groups = []
         now = datetime.now()
-        cooldown_hours = self.cooldown_hours.get(category, 6)
+        # Cooldown süresini azaltalım (kaç saat bekleneceği)
+        cooldown_hours = self.cooldown_hours.get(category, 3)  # 6'dan 3'e düşürüldü
         
         for group_id in self.group_categories[category]:
             # Bu gruba en son ne zaman mesaj gönderdik?
@@ -377,60 +487,136 @@ class AnnouncementService(BaseService):
     
     async def _send_announcement_to_group(self, group_id: int, category: str, announcement_type: str) -> bool:
         """
-        Belirli bir gruba duyuru mesajı gönderir.
+        Belirli bir gruba duyuru gönderir.
         
         Args:
-            group_id: Grup ID
+            group_id: Duyuru gönderilecek grubun ID'si
             category: Grup kategorisi
-            announcement_type: Duyuru türü
+            announcement_type: Duyuru tipi
             
         Returns:
             bool: Başarılı ise True
         """
         try:
-            # Önce hız sınırlayıcısını kontrol et
+            # 1. Güvenlik kontrolü yap - cooldown süresini azalt
+            if group_id in self.last_group_message:
+                last_time = self.last_group_message[group_id]
+                hours_since_last = (datetime.now() - last_time).total_seconds() / 3600
+                
+                # Cooldown süresini kategoriye göre azalt
+                if hours_since_last < self.cooldown_hours.get(category, 12):  # 24'ten 12'ye düşürüldü
+                    logger.debug(f"Grup {group_id} için bekletme süresi dolmadı: Son mesajdan {hours_since_last:.1f} saat geçmiş")
+                    return False
+            
+            # 2. Grup güvenliğini kontrol et (GroupService varsa)
+            is_safe = True
+            if 'group' in self.services and hasattr(self.services['group'], 'analyze_group_safety'):
+                try:
+                    safety_result = await self.services['group'].analyze_group_safety(group_id)
+                    is_safe = safety_result.get('is_safe', True)
+                    
+                    if not is_safe:
+                        risk_level = safety_result.get('risk_level', 'high')
+                        logger.warning(f"Grup güvenli değil (risk: {risk_level}), duyuru gönderilmiyor: {group_id}")
+                        return False
+                except Exception as safety_error:
+                    logger.error(f"Grup güvenlik analizi hatası: {str(safety_error)}")
+            
+            # 3. Mesaj içeriğini seç
+            message = self._choose_announcement_template(category, announcement_type)
+            if not message:
+                logger.warning(f"Uygun duyuru şablonu bulunamadı: {category}/{announcement_type}")
+                return False
+            
+            # 4. Varsa kendi grup linklerimizi mesaja ekle
+            own_links = self._parse_group_links()
+            if own_links and '{}' in message:
+                link = random.choice(own_links)
+                message = message.format(link)
+            
+            # 5. Hız kontrolü - FloodWait hatalarını önlemek için
             wait_time = self.rate_limiter.get_wait_time()
             if wait_time > 0:
-                logger.debug(f"Rate limit - {wait_time:.1f} saniye bekleniyor")
+                logger.debug(f"Hız limiti nedeniyle {wait_time:.1f} sn bekleniyor")
                 await asyncio.sleep(wait_time)
             
-            # Grup bilgilerini al
-            group_info = None
-            if hasattr(self.db, 'get_group_info'):
-                group_info = await self._run_async_db_method(self.db.get_group_info, group_id)
-                
-            if not group_info:
-                logger.warning(f"Grup bilgisi alınamadı: {group_id}")
-                return False
+            # 6. Mesajı gönder - güvenli hata yakalama ile 
+            max_retries = 2
+            retry_count = 0
+            last_error = None
             
-            # Şablon seç
-            template = self._choose_announcement_template(category, announcement_type)
-            if not template:
-                logger.warning(f"{category}/{announcement_type} için şablon bulunamadı")
-                return False
+            while retry_count <= max_retries:
+                try:
+                    # DataMining servisini kullan (varsa) entity alma
+                    entity = None
+                    
+                    if 'dm' in self.services and hasattr(self.services['dm'], 'get_safe_entity'):
+                        entity = await self.services['dm'].get_safe_entity(group_id) 
+                    
+                    # Entity bulunamadıysa doğrudan ID ile dene
+                    if entity:
+                        await self.client.send_message(entity, message)
+                    else:
+                        await self.client.send_message(group_id, message)
+                    
+                    # Başarılı gönderim
+                    self.last_group_message[group_id] = datetime.now()
+                    self.announcement_count += 1
+                    self.last_announcement_time = datetime.now()
+                    
+                    # Başarıyı rate_limiter'a bildir
+                    self.rate_limiter.mark_success()
+                    
+                    logger.info(f"Duyuru gönderildi: Grup {group_id}, Tip {announcement_type}")
+                    return True
+                    
+                except errors.FloodWaitError as e:
+                    # Rate limit hatası
+                    wait_seconds = e.seconds
+                    logger.warning(f"FloodWait hatası: {wait_seconds} saniye bekleniyor")
+                    
+                    # Rate limiter'ı güncelle
+                    self.rate_limiter.register_error(e)
+                    
+                    # Bekleme süresini ayarla
+                    await asyncio.sleep(wait_seconds + 1)
+                    retry_count += 1
+                    last_error = e
+                    
+                except (errors.ChatWriteForbiddenError, errors.ChatAdminRequiredError) as e:
+                    # Kalıcı hata - bu gruba bir daha mesaj göndermeye çalışma
+                    logger.warning(f"Gruba yazma izni yok: {group_id}, {str(e)}")
+                    
+                    # Grup servisine hatayı raporla
+                    if 'group' in self.services and hasattr(self.services['group'], '_update_group_error'):
+                        await self.services['group']._update_group_error(
+                            group_id, 
+                            f"ChatWriteForbiddenError: {str(e)}", 
+                            permanent=True
+                        )
+                    
+                    return False
+                    
+                except Exception as e:
+                    # Diğer hatalar için tekrar dene
+                    logger.error(f"Duyuru gönderirken hata: {str(e)}")
+                    retry_count += 1
+                    last_error = e
+                    
+                    # Kısa bekleyip tekrar dene
+                    await asyncio.sleep(2 * retry_count)
             
-            # Grup linklerini hazırla
-            group_links = self._parse_group_links()
-            if not group_links:
-                logger.warning("Mesaja eklemek için grup linki bulunamadı")
-                return False
-                
-            # Link seç ve mesajı formatla
-            link = random.choice(group_links)
-            message = template.format(link)
+            # Tüm denemeler başarısız oldu
+            error_type = type(last_error).__name__ if last_error else "Unknown"
+            logger.error(f"Maksimum deneme sayısı aşıldı, duyuru gönderilemedi: {group_id} (Hata: {error_type})")
             
-            # Mesajı gönder
-            await self.client.send_message(group_id, message)
-            logger.info(f"Duyuru gönderildi - Grup: {group_id}, Tür: {announcement_type}")
+            # Rate limiter'a hatayı bildir
+            self.rate_limiter.register_failure()
             
-            # Rate limiter'ı güncelle
-            self.rate_limiter.mark_used()
-            
-            return True
+            return False
             
         except Exception as e:
-            logger.error(f"Duyuru gönderme hatası (Grup {group_id}): {str(e)}")
-            self.rate_limiter.register_error(e)
+            logger.error(f"Duyuru gönderme işlemi başarısız: {str(e)}")
             return False
     
     def _choose_announcement_template(self, category: str, announcement_type: str) -> str:

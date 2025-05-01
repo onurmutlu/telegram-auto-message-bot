@@ -483,22 +483,27 @@ class InviteHandler:
                 if os.path.exists(path):
                     with open(path, 'r', encoding='utf-8') as f:
                         data = json.load(f)
+                        # Sözlük formatı (yeni format)
                         if isinstance(data, dict):
+                            templates = []
+                            
                             if "invite_templates" in data:
                                 templates = data["invite_templates"]
-                                if templates:
-                                    logger.info(f"{len(templates)} davet şablonu {path} dosyasından yüklendi")
-                                    return templates
                             elif "invites" in data:
                                 templates = data["invites"]
-                                if templates:
-                                    logger.info(f"{len(templates)} davet şablonu {path} dosyasından yüklendi")
-                                    return templates
                             elif "first_invite" in data:
                                 templates = data["first_invite"]
-                                if templates:
-                                    logger.info(f"{len(templates)} davet şablonu {path} dosyasından yüklendi")
-                                    return templates
+                            # Yeni format: ID-içerik yapısı
+                            else:
+                                for key, value in data.items():
+                                    if isinstance(value, dict) and "content" in value:
+                                        templates.append(value["content"])
+                                    
+                            if templates:
+                                logger.info(f"{len(templates)} davet şablonu {path} dosyasından yüklendi")
+                                return templates
+                                
+                        # Liste formatı (eski format)
                         elif isinstance(data, list):
                             if data:
                                 logger.info(f"{len(data)} davet şablonu {path} dosyasından yüklendi")

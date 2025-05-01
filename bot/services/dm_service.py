@@ -410,31 +410,20 @@ class DirectMessageService(BaseService):
             return []
 
     async def start(self) -> bool:
-        """Servisi başlatır."""
-        # Zaten çalışıyorsa tekrar başlatma
-        if self.running:
-            return True
+        """
+        Servisi başlatır.
         
-        self.running = True
-        logger.info(f"{self.name} servisi başlatılıyor...")
-        
-        # Önceki event handler'ları temizle
-        try:
-            self.client.remove_event_handler(self.on_new_message) 
-            self.client.remove_event_handler(self.handle_private_message)
-        except Exception:
-            pass  # İlk başlatmada handler olmayabilir, hata görmezden gelinebilir
-        
-        # DÜZELTME: Sadece özel mesajlar için olan handler'ı ekle
-        # Bu handler direkt olarak mesajları işler
-        self.client.add_event_handler(
-            self.handle_private_message,
-            events.NewMessage(incoming=True, func=lambda e: e.is_private)
-        )
-        
+        Returns:
+            bool: Başarılı ise True
+        """
+        if not self.initialized:
+            await self.initialize()
+            
+        self.is_running = True
+        self.start_time = datetime.now()
         logger.info(f"{self.name} servisi başlatıldı.")
         return True
-
+        
     async def stop(self) -> None:
         """
         Servisi güvenli bir şekilde durdurur.
@@ -442,35 +431,41 @@ class DirectMessageService(BaseService):
         Returns:
             None
         """
-        if not self.running:
-            return
+        # Önce durum değişkenini güncelle
+        self.is_running = False
+        
+        # Durdurma sinyalini ayarla (varsa)
+        if hasattr(self, 'stop_event') and self.stop_event:
+            self.stop_event.set()
             
-        self.running = False
-        logger.info(f"{self.name} servisi durdurma sinyali gönderildi")
+        # Diğer durdurma sinyallerini de kontrol et
+        if hasattr(self, 'shutdown_event'):
+            self.shutdown_event.set()
         
-        # Event handler'ları kaldır
+        # Çalışan görevleri iptal et
         try:
-            self.client.remove_event_handler(self.on_new_message)
-        except Exception as e:
-            logger.error(f"Event handler kaldırma hatası: {str(e)}")
-        
-        # TDLib istemcisini kapat
-        if hasattr(self, 'tdlib_client') and self.tdlib_client:
+            service_tasks = [task for task in asyncio.all_tasks() 
+                        if (task.get_name().startswith(f"{self.name}_task_") or
+                            task.get_name().startswith(f"{self.service_name}_task_")) and 
+                        not task.done() and not task.cancelled()]
+                        
+            for task in service_tasks:
+                task.cancel()
+                
+            # Kısa bir süre bekle
             try:
-                if hasattr(self, 'receive_task') and self.receive_task:
-                    self.receive_task.cancel()
-                    
-                await asyncio.sleep(0.5)  # Kısa bir bekletme
+                await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                pass
                 
-                # TDLib istemcisini asenkron olarak kapat
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, lambda: self.tdlib_client.stop())
-                self.tdlib_client = None
-            except Exception as e:
-                logger.error(f"TDLib kapatma hatası: {str(e)}")
-                
-        await super().stop()
-    
+            # İptal edilen görevlerin tamamlanmasını kontrol et
+            if service_tasks:
+                await asyncio.wait(service_tasks, timeout=2.0)
+        except Exception as e:
+            logger.error(f"{self.service_name} görevleri iptal edilirken hata: {str(e)}")
+            
+        logger.info(f"{self.service_name} servisi durduruldu.")
+        
     async def _receive_loop(self):
         """TDLib'den sürekli yanıt alma döngüsü"""
         if not hasattr(self, 'have_tdlib') or not self.have_tdlib or not self.tdlib_client:
@@ -698,6 +693,88 @@ class DirectMessageService(BaseService):
         except Exception as e:
             logger.error(f"Özel mesaj işleme hatası: {str(e)}")
     
+    async def handle_private_message(self, event):
+        """Sadece özel mesajları işler"""
+        if not event.is_private:
+            return  # Sadece özel mesajları işle
+            
+        try:
+            # Mesaj içeriğini kontrol et
+            if not event.message or not event.message.text:
+                return
+                
+            sender = await event.get_sender()
+            if not sender:
+                return
+                
+            logger.info(f"Özel mesaj alındı: {sender.id} (@{getattr(sender, 'username', 'bilinmiyor')}) - '{event.message.text[:30]}...'")
+            
+            # Bot'un kendi mesajlarına yanıt vermeyi önle
+            if hasattr(self.client, 'get_me'):
+                me = await self.client.get_me()
+                if sender.id == me.id:
+                    logger.debug("Bot'un kendi mesajı, yanıt verilmiyor")
+                    return
+            
+            # Kullanıcı verisini hazırla
+            user_data = {
+                'user_id': sender.id,
+                'username': getattr(sender, 'username', None),
+                'first_name': getattr(sender, 'first_name', None),
+                'last_name': getattr(sender, 'last_name', None)
+            }
+            
+            # Kullanıcı son 6 saat içinde cevap aldı mı kontrol et
+            if sender.id in self.responded_users:
+                logger.debug(f"Kullanıcı {sender.id} zaten son oturumda cevap almış, tekrar gönderilmiyor")
+                return
+                
+            # Veritabanında son mesaj gönderim zamanını kontrol et
+            recently_contacted = False
+            if hasattr(self.db, 'was_recently_contacted'):
+                try:
+                    recently_contacted = await self._run_async_db_method(
+                        self.db.was_recently_contacted,
+                        sender.id,
+                        self.invite_cooldown_minutes
+                    )
+                except Exception as e:
+                    logger.warning(f"Son mesaj kontrolü hatası: {str(e)}")
+            
+            if recently_contacted:
+                logger.debug(f"Kullanıcı {sender.id} son {self.invite_cooldown_minutes} dakika içinde cevap almış, tekrar gönderilmiyor")
+                return
+                
+            # Özel komutları kontrol et
+            if event.message.text.startswith('/'):
+                await self._handle_command(event)
+                return
+                
+            # Bot mention edildi mi?
+            if event.message.mentioned:
+                await self._handle_mention(event)
+                return
+                
+            # Bot'un mesajına cevap mı?
+            if event.message.reply_to and event.message.reply_to.reply_to_msg_id:
+                # Cevap verilen mesajın kime ait olduğunu kontrol et
+                replied_msg = await event.message.get_reply_message()
+                bot_id = getattr(self, 'my_id', None)
+                if replied_msg and bot_id and replied_msg.sender_id == bot_id:
+                    # Bot'un mesajına cevap verilmiş
+                    logger.info(f"Bot mesajına cevap işleniyor: {event.message.text}")
+                    await self._handle_reply_to_bot(event)
+                    return
+            
+            # Kullanıcıyı işle ve otomatik cevap ver
+            logger.info(f"Yeni DM için otomatik cevap gönderiliyor: {sender.id}")
+            await self._process_user(user_data, event)
+            self.responded_users.add(sender.id)
+            
+        except Exception as e:
+            logger.error(f"Özel mesaj işleme hatası: {str(e)}")
+            logger.debug(traceback.format_exc())
+
     async def handle_new_message(self, event):
         """Yeni mesaj olayını işler."""
         try:
@@ -748,30 +825,6 @@ class DirectMessageService(BaseService):
             logger.error(f"DM mesajı işleme hatası: {str(e)}")
             logger.debug(traceback.format_exc())  # Stack trace ekleyerek detaylı hata bilgisi
 
-    async def handle_private_message(self, event):
-        """Sadece özel mesajları işler"""
-        if not event.is_private:
-            return  # Sadece özel mesajları işle
-            
-        try:
-            sender = await event.get_sender()
-            if sender:
-                logger.info(f"Özel mesaj alındı: {sender.id} (@{getattr(sender, 'username', 'bilinmiyor')})")
-                
-                # Kullanıcı verisini hazırla
-                user_data = {
-                    'user_id': sender.id,
-                    'username': getattr(sender, 'username', None),
-                    'first_name': getattr(sender, 'first_name', None),
-                    'last_name': getattr(sender, 'last_name', None)
-                }
-                
-                # Kullanıcıyı işle ve otomatik cevap ver
-                await self._process_user(user_data, event)
-                
-        except Exception as e:
-            logger.error(f"Özel mesaj işleme hatası: {str(e)}")
-
     async def _handle_reply_to_bot(self, event):
         """Bot mesajlarına verilen yanıtları işler"""
         try:
@@ -779,12 +832,34 @@ class DirectMessageService(BaseService):
             message_text = event.message.text.lower()
             sender = await event.get_sender()
             
-            # Duygu analizi (basit kural tabanlı)
-            is_positive = any(word in message_text for word in ["teşekkür", "sağol", "evet", "tamam", "iyi", "güzel"])
-            is_question = any(word in message_text for word in ["?", "ne", "nasıl", "nerede", "kim", "ne zaman", "neden"])
-            is_greeting = any(word in message_text for word in ["merhaba", "selam", "hey", "hi", "hello"])
+            # Orijinal cevaplanan mesajı al
+            replied_msg = await event.message.get_reply_message()
+            original_text = replied_msg.text if replied_msg and hasattr(replied_msg, 'text') else ""
             
-            # Yanıt türünü belirle
+            logger.debug(f"Bot yanıtı - Kullanıcı: {sender.id} - Yanıt: '{message_text[:30]}...' - Orijinal: '{original_text[:30]}...'")
+            
+            # Gelişmiş duygu analizi (Türkçe tabanlı)
+            is_positive = any(word in message_text for word in [
+                "teşekkür", "sağol", "evet", "tamam", "iyi", "güzel", "harika", 
+                "tabi", "tabii", "olur", "super", "süper", "mükemmel", "hoş", "harika"
+            ])
+            is_negative = any(word in message_text for word in [
+                "hayır", "istemiyorum", "olmaz", "yapma", "yok", "gerek yok", 
+                "gerek", "lazım değil", "saçma", "kötü", "berbat", "çirkin"
+            ])
+            is_question = any(word in message_text for word in [
+                "?", "ne", "nasıl", "nerede", "kim", "ne zaman", "neden", "niye", 
+                "nedir", "hangisi", "kaç", "nereye", "nereden"
+            ])
+            is_greeting = any(word in message_text for word in [
+                "merhaba", "selam", "hey", "hi", "hello", "sa", "as", "selamlar", 
+                "selamün aleyküm", "mrb", "slm"
+            ])
+            
+            # Konuşma bağlamını analiz et
+            context = self._analyze_conversation_context(original_text, message_text)
+            
+            # Yanıt türünü belirle - bağlamı da dikkate al
             response_type = 'flirty'  # Varsayılan türü flörtöz olarak ayarla
             
             if is_greeting:
@@ -793,9 +868,13 @@ class DirectMessageService(BaseService):
                 response_type = 'question'
             elif is_positive:
                 response_type = 'positive'
-                
-            # Flörtöz bir yanıt seç (responses.json dosyasından)
-            response = self._select_response(response_type)
+            elif is_negative:
+                response_type = 'redirect'  # Olumsuz yanıtsa yönlendirme yap
+            elif context == 'group_inquiry':
+                response_type = 'group_info'
+            
+            # Bağlama göre yanıt şablonu seç
+            response = self._select_response(response_type, context)
             
             # Yanıtı gönder
             await event.reply(response)
@@ -805,11 +884,87 @@ class DirectMessageService(BaseService):
             # DM atma denemesi - kullanıcıya özel mesaj gönder
             await self._try_send_dm_to_user(sender)
             
-            # Kullanıcı etkileşim profilini güncelle (yeni özellik)
+            # Kullanıcı etkileşim profilini güncelle
             await self._update_user_interaction_profile(sender.id, message_text)
             
         except Exception as e:
             logger.error(f"Bot mesajına cevap işleme hatası: {str(e)}")
+            logger.debug(traceback.format_exc())  # Tam hata izlemesi ekle
+            
+    def _analyze_conversation_context(self, original_msg, reply_msg):
+        """Konuşma bağlamını analiz eder"""
+        # İki mesaj arasındaki bağlamı belirleme
+        if not original_msg or not reply_msg:
+            return 'general'
+            
+        original_lower = original_msg.lower()
+        reply_lower = reply_msg.lower()
+        
+        # Grup hakkında sorular varsa
+        if ('grup' in original_lower or 'kanal' in original_lower) and ('?' in reply_lower or 'nasıl' in reply_lower):
+            return 'group_inquiry'
+            
+        # Fiyat/ücret konuşması
+        if ('ücret' in reply_lower or 'fiyat' in reply_lower or 'para' in reply_lower or 'kaç' in reply_lower):
+            return 'pricing'
+            
+        # Yardım/bilgi isteme
+        if ('nasıl' in reply_lower or 'yardım' in reply_lower or 'bilgi' in reply_lower):
+            return 'help'
+            
+        # Tanışma
+        if ('kimsin' in reply_lower or 'adın ne' in reply_lower or 'kendini tanıt' in reply_lower):
+            return 'introduction'
+            
+        return 'general'
+    
+    def _select_response(self, response_type='flirty', context='general'):
+        """Yanıt türüne ve bağlama göre uygun yanıt seçer"""
+        try:
+            # Varsayılan yanıtlar (fallback için)
+            default_responses = {
+                'greeting': ["Merhaba! Size nasıl yardımcı olabilirim?"],
+                'question': ["İlginç bir soru. Gruplarımıza katılmak ister misiniz?"],
+                'positive': ["Harika! Gruplarımıza katılmanız için linkler gönderdim."],
+                'flirty': ["Teşekkürler! Nasıl gidiyor?"],
+                'redirect': ["Üzgünüm. Sizi doğru yönlendirmek için gruplarımızdan birine katılabilirsiniz."],
+                'group_info': ["Gruplarımızda yardımcı olabilecek birçok insan var, katılmanız için gereken linkler mesajımda bulunuyor."]
+            }
+            
+            # Şablon yolunu tanımla
+            templates_dir = Path(getattr(self.config, 'templates_dir', 'templates'))
+            response_template_path = templates_dir / 'responses.json'
+            
+            responses = default_responses
+            
+            # Şablonları yükle (eğer mevcutsa)
+            if response_template_path.exists():
+                try:
+                    with open(response_template_path, 'r', encoding='utf-8') as f:
+                        loaded_responses = json.load(f)
+                        # Yüklenen şablonları birleştir
+                        for key, value in loaded_responses.items():
+                            if isinstance(value, list) and value:
+                                responses[key] = value
+                except Exception as e:
+                    logger.warning(f"Yanıt şablonları yüklenemedi: {str(e)}")
+                                
+            # Bağlama göre yanıt seç
+            context_key = f"{response_type}_{context}"
+            
+            # Önce bağlam-spesifik yanıtları dene
+            if context_key in responses and responses[context_key]:
+                return random.choice(responses[context_key])
+            
+            # Yoksa genel tipte yanıt döndür
+            if response_type in responses and responses[response_type]:
+                return random.choice(responses[response_type])
+            
+            # Son çare, varsayılan yanıt
+            return "Anlıyorum. Başka nasıl yardımcı olabilirim?"
+        except Exception as e:
+            logger.error(f"Yanıt seçme hatası: {str(e)}")
+            return "Anlıyorum. Gruplarımıza katılabilirsiniz."
 
     async def _try_send_dm_to_user(self, user):
         """Bot ile etkileşime giren kullanıcıya DM gönderir"""
@@ -1145,28 +1300,131 @@ class DirectMessageService(BaseService):
             return False
 
     async def get_safe_entity(self, user_id, username=None):
-        """Kullanıcı entity'sini güvenli şekilde almaya çalışır."""
-        try:
-            # Önce user_service'i kullanarak dene
-            if 'user' in self.services and hasattr(self.services['user'], 'get_safe_entity'):
+        """
+        Kullanıcı entity'sini güvenli şekilde almaya çalışır.
+        Farklı stratejileri deneyerek hataları yönetir.
+        
+        Args:
+            user_id: Kullanıcı ID'si 
+            username: Kullanıcı adı (opsiyonel)
+            
+        Returns:
+            Entity: Kullanıcı entity nesnesi veya None
+        """
+        if not user_id and not username:
+            logger.warning("Entity alınamıyor: Geçersiz parametreler (user_id ve username boş)")
+            return None
+
+        # Öncelikle önbellekte kontrol et
+        if user_id and user_id in self.entity_cache:
+            cached_entity = self.entity_cache.get(user_id)
+            if cached_entity:
+                logger.debug(f"Entity önbellekten alındı: {user_id}")
+                return cached_entity
+            
+        # Öncelikle User servisini kullanarak dene (tercih edilen yöntem)
+        if 'user' in self.services and hasattr(self.services['user'], 'get_safe_entity'):
+            try:
                 entity = await self.services['user'].get_safe_entity(user_id, username)
                 if entity:
+                    logger.debug(f"Entity user_service üzerinden alındı: {user_id}/{username}")
+                    self.entity_cache[user_id] = entity
                     return entity
-                    
-            # User service yoksa veya çalışmazsa, kendi yöntemini dene
+            except Exception as e:
+                logger.warning(f"User service üzerinden entity alınamadı: {user_id}/{username}, hata: {str(e)}")
+        
+        # Exponential backoff retry parametreleri
+        max_retries = 3  # Maksimum deneme sayısı
+        base_delay = 1  # Başlangıç beklemesi (saniye)
+        
+        # User service başarısız olursa veya yoksa, alternatif yöntemler dene
+        for retry in range(max_retries):
             try:
-                return await self.client.get_entity(user_id)
-            except ValueError:
+                # Yöntem 1: Doğrudan get_entity ile dene
+                try:
+                    if user_id:
+                        try:
+                            entity = await self.client.get_entity(user_id)
+                            logger.debug(f"Entity ID ile direkt alındı: {user_id}")
+                            self.entity_cache[user_id] = entity
+                            return entity
+                        except (ValueError, TypeError) as e:
+                            logger.debug(f"ID ile entity alınamadı ({user_id}): {str(e)}")
+                except Exception as e1:
+                    logger.debug(f"ID ile entity alırken beklenmedik hata: {str(e1)}")
+                    
+                # Yöntem 2: Username ile dene
                 if username:
                     try:
-                        return await self.client.get_entity(f"@{username}")
-                    except:
-                        pass
-            return None
-            
-        except Exception as e:
-            logger.error(f"Entity güvenli alma hatası: {str(e)}")
-            return None
+                        # '@' işaretini kontrol et
+                        username_clean = username
+                        if not username_clean.startswith('@'):
+                            username_clean = '@' + username_clean
+                            
+                        entity = await self.client.get_entity(username_clean)
+                        logger.debug(f"Entity username ile alındı: {username_clean}")
+                        if hasattr(entity, 'id'):
+                            self.entity_cache[entity.id] = entity
+                        return entity
+                    except Exception as e2:
+                        logger.debug(f"Username ile entity alınamadı ({username_clean}): {str(e2)}")
+                
+                # Yöntem 3: Dialog arama
+                try:
+                    async for dialog in self.client.iter_dialogs(limit=50):
+                        if dialog.id == user_id or (hasattr(dialog.entity, 'id') and dialog.entity.id == user_id):
+                            logger.debug(f"Entity dialog taramasında bulundu: {user_id}")
+                            self.entity_cache[user_id] = dialog.entity
+                            return dialog.entity
+                            
+                        # Kullanıcı adıyla da kontrol et
+                        if username and hasattr(dialog.entity, 'username'):
+                            if dialog.entity.username and username.replace('@', '') == dialog.entity.username:
+                                logger.debug(f"Entity dialog taramasında username ile bulundu: {username}")
+                                if hasattr(dialog.entity, 'id'):
+                                    self.entity_cache[dialog.entity.id] = dialog.entity
+                                return dialog.entity
+                except Exception as e3:
+                    logger.debug(f"Dialog taramasında hata: {str(e3)}")
+                
+                # Yöntem 4: Veritabanından InputPeerUser oluştur
+                if user_id and hasattr(self.db, 'get_user_access_hash'):
+                    try:
+                        from telethon.tl.types import InputPeerUser
+                        
+                        access_hash = await self._run_async_db_method(self.db.get_user_access_hash, user_id)
+                        if access_hash:
+                            input_peer = InputPeerUser(user_id, access_hash)
+                            entity = await self.client.get_entity(input_peer)
+                            logger.debug(f"Entity access_hash ile veritabanından alındı: {user_id}")
+                            self.entity_cache[user_id] = entity
+                            return entity
+                    except Exception as e4:
+                        logger.debug(f"Veritabanı access_hash ile entity alma hatası: {str(e4)}")
+                
+                # Exponential backoff (bir sonraki deneme için bekle)
+                delay = base_delay * (2 ** retry) + (random.random() / 2)  # Jitter ekle
+                logger.debug(f"Entity alınamadı, {delay:.2f}s bekleniyor (deneme {retry+1}/{max_retries})")
+                await asyncio.sleep(delay)
+                
+            except errors.FloodWaitError as e:
+                wait_time = e.seconds
+                logger.warning(f"Entity alma sırasında FloodWaitError: {wait_time} saniye bekleniyor")
+                await asyncio.sleep(wait_time + 1)  # FloodWait'ten biraz fazla bekle
+                
+            except Exception as e:
+                logger.error(f"Entity güvenli alma sırasında beklenmedik hata: {str(e)}")
+                logger.debug(traceback.format_exc())
+                
+                # Son deneme değilse, bekleyip tekrar dene
+                if retry < max_retries - 1:
+                    delay = base_delay * (2 ** retry) + (random.random() / 2)
+                    await asyncio.sleep(delay)
+                else:
+                    break
+
+        logger.warning(f"Entity hiçbir yöntemle alınamadı ({max_retries} deneme): {user_id}/{username}")
+        return None
 
     async def run(self):
         """DM servisi için ana döngü."""

@@ -1,0 +1,685 @@
+from datetime import datetime
+import logging
+from .base_service import BaseService
+import asyncio
+
+logger = logging.getLogger(__name__)
+
+class DataMiningService(BaseService):
+    def __init__(self, client, config, db, stop_event=None):
+        super().__init__("datamining", client, config, db, stop_event)
+        self.mining_data = {}
+        self.mining_stats = {}
+        self.last_update = datetime.now()
+        self.data = {}
+        self.stats = {
+            'total_processed': 0,
+            'last_processed': None
+        }
+    
+    async def initialize(self) -> bool:
+        """
+        Servisi başlatır.
+        """
+        await super().initialize()
+        
+        try:
+            # Her adımı ayrı olarak ele alıp, bir hata olursa diğer adımlara devam edelim
+            try:
+                # Veri madenciliği verilerini yükle
+                await self._load_mining_data()
+            except Exception as e:
+                logger.error(f"Veri madenciliği verileri yüklenirken hata: {str(e)}", exc_info=True)
+                # Hata olursa boş bir dict ile devam et
+                self.mining_data = {}
+            
+            try:
+                await self._load_mining_stats()
+            except Exception as e:
+                logger.error(f"Veri madenciliği istatistikleri yüklenirken hata: {str(e)}", exc_info=True)
+                # Hata olursa boş bir dict ile devam et
+                self.mining_stats = {}
+            
+            # Başarıyla tamamlandı
+            self.initialized = True
+            logger.info(f"{self.service_name} servisi başlatıldı.")
+            
+            # Veri toplama görevini başlat
+            if hasattr(self, "start_data_collection_task"):
+                asyncio.create_task(self.start_data_collection_task())
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"{self.service_name} servisi başlatılırken genel hata: {str(e)}", exc_info=True)
+            # Yine de True döndürelim, servisin diğer servislere bağlı olduğu durumlarda bile çalışması için
+            self.initialized = True
+            return True
+        
+    async def start(self) -> bool:
+        """
+        Servisi başlatır.
+        
+        Returns:
+            bool: Başarılı ise True
+        """
+        if not self.initialized:
+            await self.initialize()
+            
+        self.is_running = True
+        self.start_time = datetime.now()
+        logger.info(f"{self.service_name} servisi başlatıldı.")
+        return True
+        
+    async def stop(self) -> None:
+        """
+        Servisi güvenli bir şekilde durdurur.
+        
+        Returns:
+            None
+        """
+        # Önce durum değişkenini güncelle
+        self.is_running = False
+        
+        # Durdurma sinyalini ayarla (varsa)
+        if hasattr(self, 'stop_event') and self.stop_event:
+            self.stop_event.set()
+            
+        # Diğer durdurma sinyallerini de kontrol et
+        if hasattr(self, 'shutdown_event'):
+            self.shutdown_event.set()
+        
+        # Çalışan görevleri iptal et
+        try:
+            service_tasks = [task for task in asyncio.all_tasks() 
+                        if (task.get_name().startswith(f"{self.name}_task_") or
+                            task.get_name().startswith(f"{self.service_name}_task_")) and 
+                        not task.done() and not task.cancelled()]
+                        
+            for task in service_tasks:
+                task.cancel()
+                
+            # Kısa bir süre bekle
+            try:
+                await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                pass
+                
+            # İptal edilen görevlerin tamamlanmasını kontrol et
+            if service_tasks:
+                await asyncio.wait(service_tasks, timeout=2.0)
+        except Exception as e:
+            logger.error(f"{self.service_name} görevleri iptal edilirken hata: {str(e)}")
+            
+        logger.info(f"{self.service_name} servisi durduruldu.")
+        
+    async def _load_mining_data(self):
+        """Veri madenciliği verilerini yükler"""
+        try:
+            # Veritabanı bağlantısını kontrol et
+            if not self.db.connected or not self.db.cursor:
+                await self.db.connect()
+                if not self.db.cursor:
+                    logger.error("Veritabanı bağlantısı kurulamadı, DB cursor null")
+                    return
+            
+            data = await self.db.fetchall("SELECT * FROM mining_data")
+            
+            if not data:
+                logger.warning("Veri madenciliği verisi bulunamadı.")
+                return
+            
+            for item in data:
+                if isinstance(item, dict):
+                    # Eğer dict olarak dönüyorsa
+                    item_id = item.get('id')
+                    if item_id:
+                        self.mining_data[item_id] = item
+                elif isinstance(item, (list, tuple)) and len(item) > 0:
+                    # Eğer tuple/list olarak dönüyorsa
+                    item_id = item[0]  # id değerini al
+                    self.mining_data[item_id] = {
+                        'id': item_id,
+                        'group_id': item[1] if len(item) > 1 else None,
+                        'keywords': item[2] if len(item) > 2 else None,
+                        'is_active': item[3] if len(item) > 3 else True
+                    }
+                
+            logger.info(f"{len(self.mining_data)} veri madenciliği kaydı yüklendi")
+            
+        except Exception as e:
+            logger.error(f"Veri madenciliği verileri yüklenirken hata: {str(e)}")
+            # Hatada boş değerle devam et
+            self.mining_data = {}
+            
+    async def _load_mining_stats(self):
+        """Veri madenciliği istatistiklerini yükler"""
+        try:
+            # Veritabanı bağlantısını kontrol et
+            if not self.db.connected or not self.db.cursor:
+                await self.db.connect()
+                if not self.db.cursor:
+                    logger.error("Veritabanı bağlantısı kurulamadı, DB cursor null")
+                    return
+            
+            # Kolon kontrolü olmadan, daha güvenli sorgu
+            stats = await self.db.fetchall("""
+                SELECT mining_id, COUNT(*) as total_records,
+                       COUNT(*) as unique_users,
+                       MAX(created_at) as last_record
+                FROM mining_logs
+                GROUP BY mining_id
+            """)
+            
+            if not stats:
+                logger.warning("Veri madenciliği istatistiği bulunamadı.")
+                return
+            
+            for stat in stats:
+                if isinstance(stat, dict):
+                    # Eğer dict olarak dönüyorsa
+                    mining_id = stat.get('mining_id')
+                    if mining_id:
+                        self.mining_stats[mining_id] = {
+                            'total_records': stat.get('total_records', 0),
+                            'unique_users': stat.get('unique_users', 0),
+                            'last_record': stat.get('last_record')
+                        }
+                elif isinstance(stat, (list, tuple)) and len(stat) >= 4:
+                    # Eğer tuple/list olarak dönüyorsa
+                    mining_id = stat[0]
+                    self.mining_stats[mining_id] = {
+                        'total_records': stat[1],
+                        'unique_users': stat[2],
+                        'last_record': stat[3]
+                    }
+                
+            logger.info(f"{len(self.mining_stats)} veri madenciliği istatistiği yüklendi")
+            
+        except Exception as e:
+            logger.error(f"Veri madenciliği istatistikleri yüklenirken hata: {str(e)}")
+            # Hatada boş değerle devam et
+            self.mining_stats = {}
+            
+    async def create_mining_job(self, job_data):
+        """Yeni veri madenciliği işi oluşturur"""
+        try:
+            job_id = await self.db.execute(
+                "INSERT INTO mining_data (group_id, keywords, is_active) VALUES ($1, $2, $3) RETURNING id",
+                job_data['group_id'],
+                job_data['keywords'],
+                job_data.get('is_active', True)
+            )
+            
+            await self._load_mining_data()
+            
+            logger.debug(f"Yeni veri madenciliği işi oluşturuldu: {job_id}")
+            return job_id
+            
+        except Exception as e:
+            logger.error(f"Veri madenciliği işi oluşturulurken hata: {str(e)}")
+            return None
+            
+    async def update_mining_job(self, job_id, job_data):
+        """Veri madenciliği işini günceller"""
+        try:
+            await self.db.execute(
+                "UPDATE mining_data SET group_id = $1, keywords = $2, is_active = $3 WHERE id = $4",
+                job_data['group_id'],
+                job_data['keywords'],
+                job_data.get('is_active', True),
+                job_id
+            )
+            
+            await self._load_mining_data()
+            
+            logger.debug(f"Veri madenciliği işi güncellendi: {job_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Veri madenciliği işi güncellenirken hata: {str(e)}")
+            return False
+            
+    async def delete_mining_job(self, job_id):
+        """Veri madenciliği işini siler"""
+        try:
+            await self.db.execute("DELETE FROM mining_logs WHERE mining_id = $1", job_id)
+            await self.db.execute("DELETE FROM mining_data WHERE id = $1", job_id)
+            
+            await self._load_mining_data()
+            await self._load_mining_stats()
+            
+            logger.debug(f"Veri madenciliği işi silindi: {job_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Veri madenciliği işi silinirken hata: {str(e)}")
+            return False
+            
+    async def log_mining_result(self, job_id, user_id, data):
+        """Veri madenciliği sonucunu kaydeder"""
+        try:
+            await self.db.execute(
+                "INSERT INTO mining_logs (mining_id, user_id, data) VALUES ($1, $2, $3)",
+                job_id,
+                user_id,
+                data
+            )
+            
+            await self._load_mining_stats()
+            
+            logger.debug(f"Veri madenciliği sonucu kaydedildi: {job_id}, {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Veri madenciliği sonucu kaydedilirken hata: {str(e)}")
+            return False
+            
+    async def get_mining_stats(self, job_id):
+        """Veri madenciliği istatistiklerini getirir"""
+        return self.mining_stats.get(job_id, {
+            'total_records': 0,
+            'unique_users': 0,
+            'last_record': None
+        }) 
+
+    async def start_data_collection_task(self):
+        """
+        Verileri kalıcı olarak toplamak için arkaplan görevi başlatır
+        """
+        logger.info("Veri toplama görevi başlatılıyor...")
+        
+        # Her 15 dakikada bir grup ve kullanıcı verilerini topla (önceden 30 dakikaydı)
+        while self.is_running and not self.stop_event.is_set():
+            try:
+                # Grupları güncelle
+                await self.update_group_data()
+                
+                # Her 3 saatte bir grup kullanıcılarını güncelle (önceden 6 saatte birdi)
+                current_hour = datetime.now().hour
+                if current_hour % 3 == 0:  # 00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, 21:00
+                    await self.update_group_members()
+                
+                # 15 dakika bekle (önceden 30 dakikaydı)
+                await asyncio.sleep(15 * 60)
+                
+            except asyncio.CancelledError:
+                logger.info("Veri toplama görevi iptal edildi")
+                break
+            except Exception as e:
+                logger.error(f"Veri toplama sırasında hata: {str(e)}", exc_info=True)
+                await asyncio.sleep(2 * 60)  # 2 dakika bekle ve tekrar dene (önceden 5 dakikaydı)
+
+    async def update_group_data(self):
+        """
+        Tüm grupların verilerini günceller ve PostgreSQL'e kaydeder
+        """
+        try:
+            logger.info("Grup verilerini güncelleme görevi başladı")
+            
+            # Grup servisine erişim kontrolü
+            if not hasattr(self, 'services') or 'group' not in self.services:
+                logger.warning("Grup servisi bulunamadı, grup verileri güncellenemiyor")
+                return
+            
+            group_service = self.services['group']
+            
+            # Tüm grupları keşfet (limit artırıldı)
+            discovered_groups = await group_service.discover_groups(limit=300)
+            
+            updated_count = 0
+            new_count = 0
+            
+            # Her grup için verileri güncelle
+            for group in discovered_groups:
+                group_id = group.get('id')
+                title = group.get('title')
+                
+                # Entity bilgilerini al
+                try:
+                    entity = None
+                    try:
+                        entity = await self.client.get_entity(group_id)
+                    except Exception as entity_error:
+                        logger.error(f"Grup entity alınamadı: {group_id}, hata: {str(entity_error)}")
+                    
+                    # Grup verilerini hazırla
+                    group_data = {
+                        'group_id': group_id,
+                        'name': title,
+                        'username': getattr(entity, 'username', None) if entity else None,
+                        'description': None,  # Daha sonra full_channel bilgisinden alınacak
+                        'is_public': getattr(entity, 'username', None) is not None if entity else True,
+                        'source': 'discover',
+                    }
+                    
+                    # FullChannel bilgisini almaya çalış
+                    try:
+                        from telethon.tl.functions.channels import GetFullChannelRequest
+                        if entity:
+                            full_channel = await self.client(GetFullChannelRequest(entity))
+                            if hasattr(full_channel, 'full_chat') and hasattr(full_channel.full_chat, 'about'):
+                                group_data['description'] = full_channel.full_chat.about
+                            if hasattr(full_channel, 'chats') and len(full_channel.chats) > 0:
+                                group_data['member_count'] = full_channel.chats[0].participants_count
+                    except Exception as full_error:
+                        logger.debug(f"Grup tam bilgileri alınamadı: {group_id}, hata: {str(full_error)}")
+                    
+                    # Grup verilerini veritabanına kaydet
+                    try:
+                        # Veritabanı bağlantısını kontrol et
+                        if not self.db.connected:
+                            await self.db.connect()
+                            
+                        # Grup var mı kontrol et
+                        query = "SELECT group_id FROM groups WHERE group_id = %s"
+                        result = await self.db.fetchone(query, (group_id,))
+                        
+                        if result:
+                            # Mevcut grubu güncelle
+                            update_query = """
+                            UPDATE groups SET 
+                                name = %s, 
+                                username = %s, 
+                                description = %s, 
+                                is_public = %s,
+                                updated_at = NOW()
+                            WHERE group_id = %s
+                            """
+                            params = (
+                                group_data['name'], 
+                                group_data['username'], 
+                                group_data['description'], 
+                                group_data['is_public'],
+                                group_id
+                            )
+                            await self.db.execute(update_query, *params)
+                            updated_count += 1
+                        else:
+                            # Yeni grup ekle
+                            insert_query = """
+                            INSERT INTO groups (
+                                group_id, name, username, description, 
+                                is_public, source, join_date, created_at
+                            ) VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+                            """
+                            params = (
+                                group_id, 
+                                group_data['name'], 
+                                group_data['username'], 
+                                group_data['description'], 
+                                group_data['is_public'],
+                                group_data['source']
+                            )
+                            await self.db.execute(insert_query, *params)
+                            new_count += 1
+                        
+                    except Exception as db_error:
+                        logger.error(f"Grup veritabanına kaydedilirken hata: {str(db_error)}")
+                    
+                    # Data mining tablosuna da kaydet
+                    await self.store_group_mining_data(group_id, group_data)
+                    
+                except Exception as group_error:
+                    logger.error(f"Grup verisi işlenirken hata: {str(group_error)}")
+            
+            logger.info(f"Grup verilerini güncelleme tamamlandı: {new_count} yeni, {updated_count} güncellendi")
+            
+        except Exception as e:
+            logger.error(f"Grup verilerini güncelleme hatası: {str(e)}", exc_info=True)
+
+    async def update_group_members(self):
+        """
+        Tüm gruplardaki üyeleri günceller ve PostgreSQL'e kaydeder
+        """
+        try:
+            logger.info("Grup üyelerini güncelleme görevi başladı")
+            
+            # Veritabanı bağlantısını kontrol et
+            if not self.db.connected:
+                await self.db.connect()
+                
+            # Aktif grupları al (limit artırıldı)
+            query = "SELECT group_id, name FROM groups WHERE is_active = TRUE LIMIT 100"
+            groups = await self.db.fetchall(query)
+            
+            if not groups:
+                logger.warning("Aktif grup bulunamadı")
+                return
+            
+            total_users = 0
+            processed_groups = 0
+            
+            # Her grup için üyeleri al
+            for group in groups:
+                group_id = group[0]
+                group_name = group[1]
+                
+                try:
+                    logger.info(f"Grup üyeleri alınıyor: {group_name} ({group_id})")
+                    
+                    # Telethon ile grup üyelerini al
+                    from telethon.tl.functions.channels import GetParticipantsRequest
+                    from telethon.tl.types import ChannelParticipantsRecent
+                    
+                    entity = None
+                    try:
+                        entity = await self.client.get_entity(group_id)
+                    except Exception as entity_error:
+                        logger.error(f"Grup entity alınamadı: {group_id}, hata: {str(entity_error)}")
+                        continue
+                    
+                    # Üyeleri al (maksimum 200 -> 300)
+                    participants = []
+                    try:
+                        participants = await self.client(GetParticipantsRequest(
+                            entity, ChannelParticipantsRecent(), offset=0, limit=300, hash=0
+                        ))
+                    except Exception as part_error:
+                        logger.error(f"Grup üyeleri alınamadı: {group_id}, hata: {str(part_error)}")
+                        continue
+                    
+                    if not participants or not hasattr(participants, 'users') or not participants.users:
+                        logger.warning(f"Grup {group_id} için üye bulunamadı")
+                        continue
+                    
+                    # Her kullanıcı için
+                    user_count = 0
+                    for user in participants.users:
+                        if not hasattr(user, 'id'):
+                            continue
+                        
+                        user_id = user.id
+                        
+                        # Kullanıcı verilerini hazırla
+                        user_data = {
+                            'user_id': user_id,
+                            'username': getattr(user, 'username', None),
+                            'first_name': getattr(user, 'first_name', None),
+                            'last_name': getattr(user, 'last_name', None),
+                            'is_bot': getattr(user, 'bot', False),
+                            'is_premium': getattr(user, 'premium', False),
+                            'language_code': getattr(user, 'lang_code', None),
+                            'phone': getattr(user, 'phone', None)
+                        }
+                        
+                        # Kullanıcıyı veritabanına kaydet
+                        try:
+                            # Kullanıcı var mı kontrol et
+                            user_query = "SELECT user_id FROM telegram_users WHERE user_id = %s"
+                            user_result = await self.db.fetchone(user_query, (user_id,))
+                            
+                            if user_result:
+                                # Mevcut kullanıcıyı güncelle
+                                update_query = """
+                                UPDATE telegram_users SET 
+                                    username = %s, 
+                                    first_name = %s, 
+                                    last_name = %s, 
+                                    is_bot = %s,
+                                    is_premium = %s,
+                                    language_code = %s,
+                                    phone = %s,
+                                    last_seen = NOW(),
+                                    updated_at = NOW()
+                                WHERE user_id = %s
+                                """
+                                params = (
+                                    user_data['username'],
+                                    user_data['first_name'],
+                                    user_data['last_name'],
+                                    user_data['is_bot'],
+                                    user_data['is_premium'],
+                                    user_data['language_code'],
+                                    user_data['phone'],
+                                    user_id
+                                )
+                                await self.db.execute(update_query, *params)
+                            else:
+                                # Yeni kullanıcı ekle
+                                insert_query = """
+                                INSERT INTO telegram_users (
+                                    user_id, username, first_name, last_name, 
+                                    is_bot, is_premium, language_code, phone,
+                                    first_seen, last_seen, created_at, updated_at
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW(), NOW(), NOW())
+                                """
+                                params = (
+                                    user_id,
+                                    user_data['username'],
+                                    user_data['first_name'],
+                                    user_data['last_name'],
+                                    user_data['is_bot'],
+                                    user_data['is_premium'],
+                                    user_data['language_code'],
+                                    user_data['phone']
+                                )
+                                await self.db.execute(insert_query, *params)
+                            
+                            # Grup-Kullanıcı ilişkisini güncelle
+                            relation_query = """
+                            INSERT INTO group_members (user_id, group_id, joined_at, last_seen, is_active, created_at, updated_at)
+                            VALUES (%s, %s, NOW(), NOW(), TRUE, NOW(), NOW())
+                            ON CONFLICT (user_id, group_id) DO UPDATE SET
+                            last_seen = NOW(), is_active = TRUE, updated_at = NOW()
+                            """
+                            await self.db.execute(relation_query, user_id, group_id)
+                            
+                            # Data mining tablosuna da kaydet
+                            await self.store_user_mining_data(user_id, user_data, group_id)
+                            
+                            user_count += 1
+                            
+                        except Exception as user_error:
+                            logger.error(f"Kullanıcı {user_id} kaydedilirken hata: {str(user_error)}")
+                    
+                    logger.info(f"Grup {group_name} için {user_count} kullanıcı işlendi")
+                    total_users += user_count
+                    processed_groups += 1
+                    
+                    # Her grup işlemi arasında biraz bekle (kısaltıldı)
+                    await asyncio.sleep(2)
+                    
+                except Exception as group_error:
+                    logger.error(f"Grup {group_id} üyeleri işlenirken hata: {str(group_error)}")
+            
+            logger.info(f"Grup üyelerini güncelleme tamamlandı: {processed_groups} grup, {total_users} kullanıcı")
+            
+        except Exception as e:
+            logger.error(f"Grup üyelerini güncelleme hatası: {str(e)}", exc_info=True)
+
+    async def store_group_mining_data(self, group_id, group_data):
+        """
+        Grup verilerini data_mining tablosuna kaydeder
+        """
+        try:
+            if not self.db.connected:
+                await self.db.connect()
+                
+            import json
+            data_json = json.dumps(group_data)
+            
+            query = """
+            INSERT INTO data_mining (
+                telegram_id, user_id, group_id, type, source, data, 
+                is_processed, created_at, updated_at
+            ) VALUES (%s, NULL, %s, 'group', 'discover', %s, TRUE, NOW(), NOW())
+            """
+            
+            await self.db.execute(query, group_id, group_id, data_json)
+            
+        except Exception as e:
+            logger.error(f"Grup mining verisi kaydedilirken hata: {str(e)}")
+
+    async def store_user_mining_data(self, user_id, user_data, group_id=None):
+        """
+        Kullanıcı verilerini data_mining tablosuna kaydeder
+        """
+        try:
+            if not self.db.connected:
+                await self.db.connect()
+                
+            import json
+            data_json = json.dumps(user_data)
+            
+            query = """
+            INSERT INTO data_mining (
+                telegram_id, user_id, group_id, type, source, data, 
+                is_processed, created_at, updated_at
+            ) VALUES (%s, %s, %s, 'user', 'discover', %s, TRUE, NOW(), NOW())
+            """
+            
+            await self.db.execute(query, user_id, user_id, group_id, data_json)
+            
+        except Exception as e:
+            logger.error(f"Kullanıcı mining verisi kaydedilirken hata: {str(e)}")
+
+    async def get_group_analytics(self, group_id=None, limit=10):
+        """
+        Gruplar için analitik verileri döndürür
+        """
+        try:
+            if not self.db.connected:
+                await self.db.connect()
+                
+            if group_id:
+                # Belirli bir grup için analitik verileri al
+                query = """
+                SELECT g.group_id, g.name, g.username, 
+                       COUNT(DISTINCT gm.user_id) as member_count,
+                       COUNT(DISTINCT mt.id) as message_count,
+                       (SELECT COUNT(*) FROM group_members WHERE group_id = g.group_id AND is_admin = TRUE) as admin_count
+                FROM groups g
+                LEFT JOIN group_members gm ON g.group_id = gm.group_id
+                LEFT JOIN message_tracking mt ON g.group_id = mt.group_id
+                WHERE g.group_id = %s
+                GROUP BY g.group_id, g.name, g.username
+                """
+                return await self.db.fetchone(query, (group_id,))
+            else:
+                # En aktif grupların listesini al
+                query = """
+                SELECT g.group_id, g.name, g.username, 
+                       COUNT(DISTINCT gm.user_id) as member_count,
+                       COUNT(DISTINCT mt.id) as message_count,
+                       g.last_message
+                FROM groups g
+                LEFT JOIN group_members gm ON g.group_id = gm.group_id
+                LEFT JOIN message_tracking mt ON g.group_id = mt.group_id
+                WHERE g.is_active = TRUE
+                GROUP BY g.group_id, g.name, g.username, g.last_message
+                ORDER BY message_count DESC, member_count DESC
+                LIMIT %s
+                """
+                return await self.db.fetchall(query, (limit,))
+                
+        except Exception as e:
+            logger.error(f"Grup analitik verileri alınırken hata: {str(e)}")
+            return [] if group_id is None else None
+
+    async def set_services(self, services):
+        """
+        Diğer servislere referansları ayarlar
+        """
+        self.services = services
+        logger.info("DataMiningService diğer servislere bağlandı") 

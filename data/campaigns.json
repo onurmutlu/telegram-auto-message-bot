@@ -1,65 +1,102 @@
 {
-  "general": [
-    "🔥 **KAMPANYA**: Yeni üyelere özel %50 indirim fırsatını kaçırmayın!",
-    "💯 Bugüne özel fırsat - Detaylar için DM atın: @admin",
-    "🎁 Gelen tüm üyelerimize özel hediyeler 🎁 İletişim: @admin",
-    "⚡ Flash indirim bugün başladı! Sadece 24 saat geçerli. Detaylar için: @admin",
-    "🏆 Premium üyeliklerde bu ay özel fiyatlar!"
-  ],
-  "vip": [
-    "🌟 **VIP ÜYELİK**: Tüm özelliklere sınırsız erişim, sadece bu hafta %30 indirimli!",
-    "👑 VIP üyeler için özel içerikler ve ayrıcalıklar - Hemen katılın!",
-    "💎 VIP üyelik fırsatlarını keşfedin - Bu fırsat bir daha gelmeyecek!",
-    "🔑 VIP erişim anahtarınız hazır - İndirimli fiyat için son günler!",
-    "📱 Premium hesaplar için bu hafta çifte bonus! Kaçırmayın!"
-  ],
-  "seasonal": [
-    "🎄 Yılbaşı özel kampanyamız başladı! %40'a varan indirimler sizi bekliyor!",
-    "🌼 Bahar kampanyamızda tüm ürünler indirimde! Detaylar için DM: @admin",
-    "☀️ Yaz geldi! Bu yaz özel fiyatlarla hizmetlerimizden faydalanın!",
-    "🍂 Sonbahar indirimi - Sadece bu ay geçerli - Hemen katılın!",
-    "🎃 Cadılar Bayramı'na özel korkunç indirimler!"
-  ],
-  "limited": [
-    "⏰ ACELE ET! Sadece ilk 50 kişiye özel fiyat!",
-    "⚠️ SON 24 SAAT! Bu fırsat yarın sona eriyor!",
-    "🚨 Sınırlı sayıda kontenjan! Yerini şimdi ayırt: @admin",
-    "⏱️ Geri sayım başladı - Son 10 kişi için özel fırsat!",
-    "🏁 Tek seferlik özel teklif - Bugün bitmeden karar verin!"
-  ],
-  "referral": [
-    "👥 Arkadaşını getir, %20 bonus kazan! Detaylar: @admin",
-    "🤝 Referans programımıza katılın ve her yeni üye için ödüller kazanın!",
-    "👪 Aile & Arkadaş programı - Birlikte kaydolun, birlikte kazanın!",
-    "🔄 Arkadaşını davet et, ikramiye kazan! Bu fırsat sınırlı süre için geçerli.",
-    "🎯 Referans bonusu - Her başarılı davet için ekstra kredi!"
-  ],
-  "new_products": [
-    "🆕 YENİ ÜRÜN: Premium özelliklerimizi keşfedin! İlk deneyenler için %25 indirim!",
-    "📢 Yeni lansmanımızı kaçırmayın - İlk hafta özel fiyatlarla!",
-    "🚀 Yeni servisimiz kullanıma açıldı! İlk 100 kullanıcıya özel fiyat garantisi!",
-    "✨ Tamamen yenilenen yazılımımız artık daha güçlü! Yükseltme indirimi için: @admin",
-    "🔍 Yeni eklenen özelliklerimizi keşfedin - Bu hafta özel fiyatlarla!"
-  ],
-  "bundle": [
-    "📦 Paket teklifimizle hem zamandan hem paradan tasarruf edin!",
-    "💰 Tüm hizmetlerimize tek fiyatla erişin! %35'e varan tasarruf!",
-    "🔗 Kombo paketimizle tüm ihtiyaçlarınız tek bir yerde!",
-    "📚 Premium paketi ile tüm içeriklerimize sınırsız erişin - İndirimli fiyat: @admin",
-    "🎯 Özel paket teklifi - 3 ürün alana 1 ürün bedava!"
-  ],
-  "membership": [
-    "🌈 Üyelik ayrıcalıklarını keşfet! Bu hafta kayıt olan herkese %15 indirim!",
-    "🔒 Premium üyelik fırsatları - Sadece kısıtlı süre için geçerli!",
-    "🌟 Ayrıcalıklı üye olmanın tam zamanı - Yıllık üyeliklerde %25 indirim!",
-    "🎭 VIP üyelere özel etkinlikler ve buluşmalar - Hemen katılın!",
-    "📊 İstatistiklerinizi iyileştirin, daha fazlasına erişin - Premium üyelik indirimde!"
-  ],
-  "flash_sale": [
-    "⚡ FLASH SALE! Sadece 6 saat için tüm hizmetlerde %50 indirim!",
-    "🔥 Acil İndirim! Bugün gece yarısına kadar geçerli!",
-    "💫 Sürpriz indirim - Sonraki 3 saat için geçerli - Hemen harekete geçin!",
-    "🏃 Hızlı davranın! 24 saatlik indirim maratonu başladı!",
-    "🌩️ Şimşek teklifi! Bu mesajı gören 20 kişiye özel fiyat! DM: @admin"
-  ]
+  "1": {
+    "content": "🔥 **KAMPANYA**: Yeni üyelere özel %50 indirim fırsatını kaçırmayın!",
+    "category": "general",
+    "language": "tr"
+  },
+  "2": {
+    "content": "💯 Bugüne özel fırsat - Detaylar için DM atın: @admin",
+    "category": "general",
+    "language": "tr"
+  },
+  "3": {
+    "content": "🎁 Gelen tüm üyelerimize özel hediyeler 🎁 İletişim: @admin",
+    "category": "general",
+    "language": "tr"
+  },
+  "4": {
+    "content": "⚡ Flash indirim bugün başladı! Sadece 24 saat geçerli. Detaylar için: @admin",
+    "category": "flash_sale",
+    "language": "tr"
+  },
+  "5": {
+    "content": "🏆 Premium üyeliklerde bu ay özel fiyatlar!",
+    "category": "membership",
+    "language": "tr"
+  },
+  "6": {
+    "content": "🌟 **VIP ÜYELİK**: Tüm özelliklere sınırsız erişim, sadece bu hafta %30 indirimli!",
+    "category": "vip",
+    "language": "tr"
+  },
+  "7": {
+    "content": "👑 VIP üyeler için özel içerikler ve ayrıcalıklar - Hemen katılın!",
+    "category": "vip",
+    "language": "tr"
+  },
+  "8": {
+    "content": "💎 VIP üyelik fırsatlarını keşfedin - Bu fırsat bir daha gelmeyecek!",
+    "category": "vip",
+    "language": "tr"
+  },
+  "9": {
+    "content": "🎄 Yılbaşı özel kampanyamız başladı! %40'a varan indirimler sizi bekliyor!",
+    "category": "seasonal",
+    "language": "tr"
+  },
+  "10": {
+    "content": "🌼 Bahar kampanyamızda tüm ürünler indirimde! Detaylar için DM: @admin",
+    "category": "seasonal",
+    "language": "tr"
+  },
+  "11": {
+    "content": "⏰ ACELE ET! Sadece ilk 50 kişiye özel fiyat!",
+    "category": "limited",
+    "language": "tr"
+  },
+  "12": {
+    "content": "⚠️ SON 24 SAAT! Bu fırsat yarın sona eriyor!",
+    "category": "limited",
+    "language": "tr"
+  },
+  "13": {
+    "content": "👥 Arkadaşını getir, %20 bonus kazan! Detaylar: @admin",
+    "category": "referral",
+    "language": "tr"
+  },
+  "14": {
+    "content": "🤝 Referans programımıza katılın ve her yeni üye için ödüller kazanın!",
+    "category": "referral",
+    "language": "tr"
+  },
+  "15": {
+    "content": "🆕 YENİ ÜRÜN: Premium özelliklerimizi keşfedin! İlk deneyenler için %25 indirim!",
+    "category": "new_products",
+    "language": "tr"
+  },
+  "16": {
+    "content": "📢 Yeni lansmanımızı kaçırmayın - İlk hafta özel fiyatlarla!",
+    "category": "new_products",
+    "language": "tr"
+  },
+  "17": {
+    "content": "📦 Paket teklifimizle hem zamandan hem paradan tasarruf edin!",
+    "category": "bundle",
+    "language": "tr"
+  },
+  "18": {
+    "content": "💰 Tüm hizmetlerimize tek fiyatla erişin! %35'e varan tasarruf!",
+    "category": "bundle",
+    "language": "tr"
+  },
+  "19": {
+    "content": "🌈 Üyelik ayrıcalıklarını keşfet! Bu hafta kayıt olan herkese %15 indirim!",
+    "category": "membership",
+    "language": "tr"
+  },
+  "20": {
+    "content": "⚡ FLASH SALE! Sadece 6 saat için tüm hizmetlerde %50 indirim!",
+    "category": "flash_sale",
+    "language": "tr"
+  }
 }

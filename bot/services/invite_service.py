@@ -210,12 +210,18 @@ class InviteService(BaseService):
         self.interval_minutes = int(os.getenv("INVITE_INTERVAL_MINUTES", "10"))
     
     def _load_group_links(self):
-        """Çevre değişkenlerinden grup bağlantılarını yükler"""
-        links_env = os.getenv("GROUP_INVITE_LINKS", "")
-        links = [link.strip() for link in links_env.split(",") if link.strip()]
+        """Grup bağlantılarını yükler"""
+        links = []
         
+        # Önce çevre değişkenlerinden yüklemeyi dene
+        links_str = os.getenv("GROUP_LINKS", "")
+        if links_str:
+            links = [link.strip() for link in links_str.split(',') if link.strip()]
+        
+        # Eğer links boşsa, sabit tanımlı linkleri ekle
         if not links:
-            self.logger.warning("Hiç grup davet bağlantısı tanımlanmamış")
+            links = ["arayisplatin", "arayisgruba", "premium_arayis"]
+            self.logger.info("Sabit tanımlı grup bağlantıları kullanılıyor")
         else:
             self.logger.info(f"{len(links)} grup davet bağlantısı yüklendi")
             
@@ -230,12 +236,41 @@ class InviteService(BaseService):
             if os.path.exists(templates_path):
                 with open(templates_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    # JSON formatı destekle
-                    if isinstance(data, dict):
-                        templates = data.get("invites", []) or data.get("first_invite", [])
-                    elif isinstance(data, list):
-                        templates = data
+                    
+                    # Farklı formattaki şablonları işle
+                    # 1. "invites" alanındaki listeden şablonlar
+                    if "invites" in data and isinstance(data["invites"], list):
+                        templates.extend(data["invites"])
+                        
+                    # 2. "first_invite" alanındaki listeden şablonlar  
+                    elif "first_invite" in data and isinstance(data["first_invite"], list):
+                        templates.extend(data["first_invite"])
+                        
+                    # 3. ID-veri çiftlerinden gelen şablonlar
+                    else:
+                        # Dictionary yapısını kontrol et ve içeriği ekle
+                        for key, value in data.items():
+                            # Sayısal ID değerleri ile içerik kontrolü
+                            if key.isdigit() or isinstance(key, int):
+                                if isinstance(value, dict) and "content" in value:
+                                    templates.append(value["content"])
+                
+                # Log sonuçları
                 self.logger.info(f"{len(templates)} davet şablonu yüklendi")
+                
+                # Diğer bileşenleri de not et
+                components = []
+                if "invites_outro" in data:
+                    components.append("outro")
+                if "redirect_messages" in data:
+                    components.append("redirect")
+                if "admin_contacts" in data:
+                    components.append("admin")
+                if "group_links" in data:
+                    components.append("links")
+                
+                if components:
+                    self.logger.info(f"Yüklenen bileşenler: {', '.join(components)}")
             else:
                 self.logger.warning(f"Şablon dosyası bulunamadı: {templates_path}")
         except Exception as e:
@@ -246,8 +281,8 @@ class InviteService(BaseService):
             templates = ["Merhaba {name}! Grubumuz hakkında bilgi almak ister misiniz?"]
             self.logger.info("Varsayılan davet şablonu kullanılıyor")
             
-            return templates
-        
+        return templates
+
     def connect_services(self, services):
         """Diğer servislerle bağlantı kurar"""
         self.services = services
@@ -606,56 +641,151 @@ class InviteService(BaseService):
             bool: İşlem başarılı ise True
         """
         try:
-            user_id = user.get("user_id")
-            username = user.get("username")
-            first_name = user.get("first_name", "Kullanıcı")
+            # user_id değişkenini güvenli bir şekilde al
+            if isinstance(user, dict):
+                user_id = user.get("user_id")
+                username = user.get("username")
+                first_name = user.get("first_name", "Kullanıcı")
+                last_name = user.get("last_name", "")
+            elif isinstance(user, (list, tuple)) and len(user) >= 2:
+                user_id = user[0]
+                username = user[1] if len(user) > 1 else None
+                first_name = user[2] if len(user) > 2 else "Kullanıcı"
+                last_name = user[3] if len(user) > 3 else ""
+            else:
+                # Sözlük değilse, doğrudan ID olabilir
+                user_id = user
+                username = None
+                first_name = "Kullanıcı"
+                last_name = ""
+                
+            # user_id kontrolü
+            if not user_id:
+                logger.warning("Geçersiz kullanıcı ID'si: user_id yok")
+                return False
             
+            # Kullanıcı bilgisini logla
+            full_name = f"{first_name} {last_name}".strip()
+            logger.debug(f"Kullanıcı işleniyor: ID={user_id}, Username={username}, Name={full_name}")
+                
             # Kullanıcı entity'sini güvenli bir şekilde al
             try:
-                user_entity = await self.client.get_entity(user_id)
+                # Önce ID ile dene
+                try:
+                    user_entity = await self.client.get_entity(user_id)
+                except Exception as id_error:
+                    logger.debug(f"ID ile entity alınamadı: {str(id_error)}")
+                    
+                    # ID başarısız olursa ve username varsa, username ile dene
+                    if username:
+                        try:
+                            username_clean = username.replace('@', '')
+                            user_entity = await self.client.get_entity(f"@{username_clean}")
+                        except Exception as username_error:
+                            logger.debug(f"Username ile entity alınamadı: {str(username_error)}")
+                            raise ValueError(f"Entity bulunamadı: {user_id} / @{username}")
+                    else:
+                        raise id_error
+                
+                # None kontrolü
+                if user_entity is None:
+                    logger.warning(f"Kullanıcı entity null döndürüldü: {user_id}")
+                    return False
+                
             except ValueError as e:
-                logger.warning(f"Kullanıcı bulunamadı: {user_id} - {str(e)}")
+                logger.warning(f"Kullanıcı bulunamadı: ({user_id}, '{username}', '{first_name}', '{last_name}', None) - {str(e)}")
                 # Veritabanında işaretleme (opsiyonel)
                 if hasattr(self.db, 'mark_user_not_found'):
                     await self._run_async_db_method(self.db.mark_user_not_found, user_id)
                 return False
+            except TypeError as e:
+                logger.warning(f"Kullanıcı entity oluşturma hatası: {user_id} - {str(e)}")
+                return False
             
-            invite_template = random.choice(self.invite_templates)
-            personalized_message = invite_template.replace("{name}", first_name or "değerli kullanıcı")
-            
-            group_links_text = ""
-            if self.group_links:
-                group_links_text = "\n\n" + "\n".join([f"• {link}" for link in self.group_links])
+            # Entity'den kullanıcı bilgilerini al (eğer ilk değerler None ise)
+            if not username and hasattr(user_entity, 'username'):
+                username = user_entity.username
+                
+            if first_name == "Kullanıcı" and hasattr(user_entity, 'first_name'):
+                first_name = user_entity.first_name or "değerli kullanıcı"
+                
+            # Tam davet mesajını hazırla
+            templates_path = os.getenv("INVITE_TEMPLATES_PATH", "data/invites.json")
             
             try:
-                await self.client.send_message(
-                    user_entity, 
-                    personalized_message + group_links_text,
-                    link_preview=False
-                )
-            except Exception as e:
-                logger.error(f"Hata oluştu: {str(e)}")
+                # JSON dosyasını oku
+                with open(templates_path, "r", encoding="utf-8") as f:
+                    templates_data = json.load(f)
+                
+                # Ana mesaj kısmı: İnvites kısmından bir mesaj seç
+                invite_templates = templates_data.get("invites", [])
+                if not invite_templates:
+                    for key, value in templates_data.items():
+                        if isinstance(value, dict) and "content" in value:
+                            invite_templates.append(value["content"])
+                
+                if not invite_templates:
+                    invite_templates = ["Merhaba {name}! Grubumuz hakkında bilgi almak ister misiniz?"]
+                
+                invite_message = random.choice(invite_templates)
+                message = invite_message.replace("{name}", first_name or "değerli kullanıcı")
+                
+                # Outro kısmı ekle
+                outro_templates = templates_data.get("invites_outro", ["\n\nDiğer gruplarımıza da bekleriz 👇\n"])
+                if outro_templates:
+                    message += random.choice(outro_templates)
+                
+                # Grup linkleri ekle
+                message += "\nGruplarımız:\n"
+                group_links = templates_data.get("group_links", ["arayisplatin", "arayisgruba", "premium_arayis"])
+                if not group_links:
+                    group_links = self._load_group_links()
+                
+                if group_links:
+                    for link in group_links[:3]:  # En fazla 3 grup göster
+                        if not "://" in link and not "t.me/" in link:
+                            link = f"@{link}"
+                        message += f"• Telegram Grubu: {link}\n"
+                
+                # Redirect mesajları ve admin bilgileri ekle
+                admin_message = "\nADMIN onaylı arkadaşlarıma menü için yazabilirsin:\n"
+                admins = templates_data.get("admin_contacts", ["@omura3", "@yayincilara", "@geishakun"])
+                for admin in admins:
+                    if not admin.startswith("@"):
+                        admin = f"@{admin}"
+                    admin_message += f"• {admin}\n"
+                
+                message += admin_message
+                
+            except Exception as template_error:
+                logger.error(f"Şablon okuma hatası: {str(template_error)}")
+                # Fallback mesaj
+                message = f"Merhaba {first_name}! Telegram gruplarımıza katılmak ister misiniz? t.me/arayisplatin"
             
-            # Başarılı mesaj gönderimi sonrası rate limiter'ı güncelle
-            self.rate_limiter.mark_used()
+            # Mesajı gönder
+            await self.client.send_message(user_entity, message)
             
-            # Veritabanını güncelle ve istatistikleri tut
-            if hasattr(self.db, 'mark_user_invited'):
-                await self._run_async_db_method(self.db.mark_user_invited, user_id)
+            # İşlemi logla ve sonucu döndür
+            logger.info(f"✓ Davet mesajı gönderildi: {user_id} / {username or 'Kullanıcı adı yok'}")
             
+            # Başarılı
             return True
+                
+        except (errors.UserIdInvalidError, errors.PeerIdInvalidError) as e:
+            logger.warning(f"Geçersiz kullanıcı ID'si veya Peer hatası: {user_id} - {str(e)}")
+            return False
             
         except errors.FloodWaitError as e:
-            wait_time = e.seconds
-            logger.warning(f"FloodWaitError davet gönderirken: {wait_time} saniye bekleniyor")
-            self.rate_limiter.register_error(e)  # Hatayı rate limiter'a bildir
-            await asyncio.sleep(wait_time + 1)
+            logger.error(f"⚠️ Flood beklemesi gerekiyor: {e.seconds} saniye")
+            await asyncio.sleep(e.seconds)
             return False
-        except errors.UserPrivacyRestrictedError:
-            logger.info(f"Kullanıcı gizlilik ayarları nedeniyle mesaj kabul etmiyor: {user_id}")
+            
+        except errors.UserPrivacyRestrictedError as e:
+            logger.info(f"Kullanıcı gizlilik ayarları nedeniyle mesaj gönderilemedi: {user_id}")
             return False
+            
         except Exception as e:
-            logger.error(f"Kullanıcı işleme hatası ({user_id}): {str(e)}")
+            logger.error(f"Kullanıcı işleme hatası: {str(e)}")
             return False
 
     async def _send_invites(self):
@@ -863,3 +993,177 @@ class InviteService(BaseService):
         except Exception as e:
             logger.error(f"Davet bekleme süreleri sıfırlanırken hata: {str(e)}")
             return 0
+
+    async def start(self) -> bool:
+        """
+        Servisi başlatır.
+        
+        Returns:
+            bool: Başarılı ise True
+        """
+        if not self.initialized:
+            await self.initialize()
+            
+        self.running = True
+        self.start_time = datetime.now()
+        logger.info(f"{self.service_name} servisi başlatıldı.")
+        return True
+        
+    async def stop(self) -> None:
+        """
+        Servisi güvenli bir şekilde durdurur.
+        
+        Returns:
+            None
+        """
+        # Önce durum değişkenini güncelle
+        self.running = False
+        
+        # Durdurma sinyalini ayarla (varsa)
+        if hasattr(self, 'stop_event') and self.stop_event:
+            self.stop_event.set()
+            
+        # Diğer durdurma sinyallerini de kontrol et
+        if hasattr(self, 'shutdown_event'):
+            self.shutdown_event.set()
+        
+        # Çalışan görevleri iptal et
+        try:
+            service_tasks = [task for task in asyncio.all_tasks() 
+                        if (task.get_name().startswith(f"{self.name}_task_") or
+                            task.get_name().startswith(f"{self.service_name}_task_")) and 
+                        not task.done() and not task.cancelled()]
+                        
+            for task in service_tasks:
+                task.cancel()
+                
+            # Kısa bir süre bekle
+            try:
+                await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                pass
+                
+            # İptal edilen görevlerin tamamlanmasını kontrol et
+            if service_tasks:
+                await asyncio.wait(service_tasks, timeout=2.0)
+        except Exception as e:
+            logger.error(f"{self.service_name} görevleri iptal edilirken hata: {str(e)}")
+            
+        logger.info(f"{self.service_name} servisi durduruldu.")
+        
+    async def _load_invites(self):
+        """Davet verilerini yükler"""
+        try:
+            invites = await self.db.fetchall("SELECT * FROM invites")
+            for invite in invites:
+                self.invites[invite['id']] = invite
+                
+            logger.info(f"{len(self.invites)} davet yüklendi")
+            
+        except Exception as e:
+            logger.error(f"Davet verileri yüklenirken hata: {str(e)}")
+            
+    async def _load_invite_stats(self):
+        """Davet istatistiklerini yükler"""
+        try:
+            stats = await self.db.fetchall("""
+                SELECT invite_id, COUNT(*) as total_invites,
+                       COUNT(CASE WHEN status = 'accepted' THEN 1 END) as accepted_invites,
+                       COUNT(CASE WHEN status = 'rejected' THEN 1 END) as rejected_invites
+                FROM invite_logs
+                GROUP BY invite_id
+            """)
+            
+            for stat in stats:
+                self.invite_stats[stat['invite_id']] = {
+                    'total_invites': stat['total_invites'],
+                    'accepted_invites': stat['accepted_invites'],
+                    'rejected_invites': stat['rejected_invites']
+                }
+                
+            logger.info(f"{len(self.invite_stats)} davet istatistiği yüklendi")
+            
+        except Exception as e:
+            logger.error(f"Davet istatistikleri yüklenirken hata: {str(e)}")
+            
+    async def create_invite(self, invite_data):
+        """Yeni davet oluşturur"""
+        try:
+            invite_id = await self.db.execute(
+                "INSERT INTO invites (group_id, message, is_active) VALUES ($1, $2, $3) RETURNING id",
+                invite_data['group_id'],
+                invite_data['message'],
+                invite_data.get('is_active', True)
+            )
+            
+            await self._load_invites()
+            
+            logger.debug(f"Yeni davet oluşturuldu: {invite_id}")
+            return invite_id
+            
+        except Exception as e:
+            logger.error(f"Davet oluşturulurken hata: {str(e)}")
+            return None
+            
+    async def update_invite(self, invite_id, invite_data):
+        """Daveti günceller"""
+        try:
+            await self.db.execute(
+                "UPDATE invites SET group_id = $1, message = $2, is_active = $3 WHERE id = $4",
+                invite_data['group_id'],
+                invite_data['message'],
+                invite_data.get('is_active', True),
+                invite_id
+            )
+            
+            await self._load_invites()
+            
+            logger.debug(f"Davet güncellendi: {invite_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Davet güncellenirken hata: {str(e)}")
+            return False
+            
+    async def delete_invite(self, invite_id):
+        """Daveti siler"""
+        try:
+            await self.db.execute("DELETE FROM invite_logs WHERE invite_id = $1", invite_id)
+            await self.db.execute("DELETE FROM invites WHERE id = $1", invite_id)
+            
+            await self._load_invites()
+            await self._load_invite_stats()
+            
+            logger.debug(f"Davet silindi: {invite_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Davet silinirken hata: {str(e)}")
+            return False
+            
+    async def log_invite(self, invite_id, user_id, status):
+        """Davet durumunu kaydeder"""
+        try:
+            await self.db.execute(
+                "INSERT INTO invite_logs (invite_id, user_id, status) VALUES ($1, $2, $3)",
+                invite_id,
+                user_id,
+                status
+            )
+            
+            await self._load_invite_stats()
+            
+            logger.debug(f"Davet durumu kaydedildi: {invite_id}, {user_id}, {status}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Davet durumu kaydedilirken hata: {str(e)}")
+            return False
+            
+    async def get_invite_stats(self, invite_id):
+        """Davet istatistiklerini getirir"""
+        return self.invite_stats.get(invite_id, {
+            'total_invites': 0,
+            'accepted_invites': 0,
+            'rejected_invites': 0
+        })

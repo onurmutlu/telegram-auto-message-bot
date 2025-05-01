@@ -38,7 +38,11 @@ from bot.services.dm_service import DirectMessageService
 from bot.services.group_service import GroupService
 from database.user_db import UserDatabase
 from config.settings import Config
-from bot.core import TelegramBot
+# bot.core artık kullanılmıyor - TelegramBot importunu kaldırıyoruz
+# from bot.core import TelegramBot
+
+# Gerekirse, direkt bot.main modülünü içe aktarın
+from bot.main import main, run
 
 # Log dizini oluşturma
 LOG_DIR = Path(__file__).parent.parent / "logs"
@@ -338,6 +342,11 @@ def mock_db():
     db.get_user_count = MagicMock(return_value=10)
     db.get_active_user_count = MagicMock(return_value=8)
     db.close_connection = MagicMock()
+    
+    # Ekstra fonksiyonlar
+    db.execute = AsyncMock(return_value=True)
+    db.fetchone = AsyncMock(return_value={"id": 1, "name": "test"})
+    db.fetchall = AsyncMock(return_value=[{"id": 1, "name": "test"}])
 
     return db
 
@@ -386,6 +395,7 @@ def mock_config():
     config.admin_groups = ["https://t.me/admin_group1", "https://t.me/admin_group2"]
     config.target_groups = ["https://t.me/target_group1", "https://t.me/target_group2"]
     config.get_setting = MagicMock(return_value=True)
+    config.get = MagicMock(return_value="test_value")
     
     # Debug modu
     config.debug = False
@@ -448,87 +458,6 @@ def mock_event():
     event.get_reply_message = get_reply_message
 
     return event
-
-@pytest.fixture
-def test_config():
-    """Test ortamı için Config nesnesi oluşturur."""
-    # Geçici dosya yolları için temp dizini oluştur
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Config nesnesini oluştur
-        config = Config()
-
-        # Geçici yolları ayarla
-        temp_path = Path(temp_dir)
-        config.RUNTIME_DIR = temp_path / 'runtime'
-        config.SESSION_DIR = config.RUNTIME_DIR / 'sessions'
-        config.DATABASE_DIR = config.RUNTIME_DIR / 'database'
-        config.LOGS_DIR = config.RUNTIME_DIR / 'logs'
-        config.DATABASE_PATH = config.DATABASE_DIR / 'test_users.db'
-        config.SESSION_PATH = config.SESSION_DIR / 'test_session'
-        config.LOG_FILE_PATH = config.LOGS_DIR / 'test.log'
-
-        # Gerekli dizinleri oluştur
-        os.makedirs(config.SESSION_DIR, exist_ok=True)
-        os.makedirs(config.DATABASE_DIR, exist_ok=True)
-        os.makedirs(config.LOGS_DIR, exist_ok=True)
-
-        # Test şablonları ayarla
-        config.message_templates = [
-            "Test mesaj 1",
-            "Test mesaj 2",
-            "Test mesaj 3"
-        ]
-
-        config.invite_templates = {
-            "first_invite": [
-                "Test invite 1",
-                "Test invite 2"
-            ],
-            "redirect_messages": [
-                "Test yönlendirme 1",
-                "Test yönlendirme 2"
-            ]
-        }
-
-        config.response_templates = {
-            "flirty": [
-                "Test yanıt 1",
-                "Test yanıt 2",
-                "Test yanıt 3"
-            ]
-        }
-
-        # Debug modu ayarla
-        config.debug_mode = False
-
-        yield config
-
-        # Temizlik işlemleri
-        try:
-            import shutil
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        except:
-            pass
-
-@pytest.fixture
-def test_db(test_config):
-    """Test ortamı için veritabanı nesnesi oluşturur."""
-    # Veritabanını başlat
-    db = UserDatabase(db_path=test_config.DATABASE_PATH)
-
-    # Test verisini ekle
-    db.add_user(123456, "test_user1")
-    db.add_user(654321, "test_user2")
-    db.add_user(789012, "test_user3")
-
-    yield db
-
-    # Temizlik işlemleri
-    db.close()
-    try:
-        os.remove(test_config.DATABASE_PATH)
-    except:
-        pass
 
 @pytest.fixture
 def mock_group_handler(mock_client, mock_config, mock_db, stop_event):
@@ -641,22 +570,23 @@ def mock_dm_service(mock_client, mock_config, mock_db, stop_event):
         return service
 
 @pytest.fixture
-def mock_bot(mock_client, mock_db, mock_config):
-    """Mock bot nesnesi oluşturur."""
-    bot = TelegramBot(
-        api_id="123456",
-        api_hash="test_hash",
-        phone="1234567890",
-        group_links=["https://t.me/test1", "https://t.me/test2"],
-        user_db=mock_db,
-        config=mock_config,
-        admin_groups=["admin_group1", "admin_group2"],
-        target_groups=["target_group3", "target_group4"]
-    )
-    bot.client = mock_client
-    bot.messages = ["Test message 1", "Test message 2"]
-    bot.invite_templates = {"first_invite": ["Test invite"]}
-    bot.response_templates = {"flirty": ["Test response"]}
-    bot.is_running = True
-
+def mock_bot():
+    """Mock edilmiş bir bot nesnesi döndürür."""
+    bot = MagicMock()
+    bot.run = MagicMock(side_effect=run)
+    bot.main = AsyncMock(side_effect=main)
     return bot
+
+@pytest.fixture
+def temp_dir():
+    """Geçici bir dizin oluşturur ve testten sonra temizler."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        yield tmp_dir
+
+# Test etkinliklerini işlemek için özel bir döngü kullan
+@pytest.fixture
+def event_loop():
+    """Her test için yeni bir olay döngüsü oluştur."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()

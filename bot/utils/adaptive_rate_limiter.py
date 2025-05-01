@@ -43,6 +43,8 @@ class AdaptiveRateLimiter:
         self.last_used = 0
         self.errors = 0
         self.success_count = 0
+        
+        # Eksik nitelikler
         self.last_requests = []  # Son isteklerin zamanını tutmak için
         self.error_count = 0     # Hata sayısını tutmak için
         
@@ -70,6 +72,13 @@ class AdaptiveRateLimiter:
                 self.current_rate = self.initial_rate * 3
                 
             logger.debug(f"Rate limiter hız artışı: {self.current_rate:.2f}/dk")
+    
+    def mark_success(self):
+        """
+        Başarılı bir işlemi kaydeder (mark_used ile aynı, uyumluluk için)
+        """
+        self.mark_used()
+        logger.debug(f"İşlem başarılı olarak işaretlendi")
 
     def register_error(self, error=None):
         """
@@ -92,6 +101,16 @@ class AdaptiveRateLimiter:
             logger.warning(f"Rate limiter hata kaydedildi ({error_type}): yeni oran = {self.current_rate:.2f}/dk")
         else:
             logger.warning(f"Rate limiter hata kaydedildi: yeni oran = {self.current_rate:.2f}/dk")
+    
+    def register_failure(self, error=None):
+        """
+        Bir başarısızlık kaydeder (register_error ile aynı, uyumluluk için)
+        
+        Args:
+            error: Oluşan hata (opsiyonel)
+        """
+        self.register_error(error)
+        logger.debug(f"İşlem başarısız olarak işaretlendi")
     
     def can_execute(self):
         """
@@ -154,3 +173,40 @@ class AdaptiveRateLimiter:
         except Exception as e:
             logger.error(f"Bekleme süresi hesaplama hatası: {str(e)}")
             return 1.0  # Hata durumunda 1 saniye bekle
+            
+    def get_status(self):
+        """
+        Hız sınırlayıcı durum bilgilerini döndürür.
+        
+        Returns:
+            dict: Durum bilgileri
+        """
+        now = time.time()
+        wait_time = self.get_wait_time()
+        
+        return {
+            'current_rate': self.current_rate,
+            'initial_rate': self.initial_rate,
+            'period': self.period,
+            'error_backoff': self.error_backoff,
+            'max_jitter': self.max_jitter,
+            'errors': self.errors,
+            'error_count': self.error_count,
+            'success_count': self.success_count,
+            'last_used': self.last_used,
+            'wait_time': wait_time,
+            'requests_last_hour': len(self.last_requests),
+            'active': now - self.last_used < self.period * 5
+        }
+        
+    def reset(self):
+        """
+        Rate limiter'ı başlangıç durumuna sıfırlar.
+        """
+        self.current_rate = self.initial_rate
+        self.last_used = 0
+        self.errors = 0
+        self.success_count = 0
+        self.last_requests = []
+        self.error_count = 0
+        logger.debug(f"Rate limiter sıfırlandı: {self.current_rate}/{self.period}s")

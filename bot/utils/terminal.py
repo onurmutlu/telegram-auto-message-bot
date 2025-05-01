@@ -1,8 +1,23 @@
 from rich.console import Console
 from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+import os
+import platform
 
 # Singleton konsol nesnesi
 console = Console()
+
+def clear_screen():
+    """
+    Terminal ekranını temizler, platformdan bağımsız çalışır.
+    """
+    # Windows için
+    if platform.system() == "Windows":
+        os.system("cls")
+    # Linux, macOS ve diğer Unix benzeri sistemler için
+    else:
+        os.system("clear")
+    
+    return True
 
 def print_banner(title, style="bold blue on white"):
     """

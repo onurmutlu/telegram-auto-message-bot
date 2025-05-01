@@ -53,10 +53,21 @@ class ServiceManager:
         self.start_time = datetime.now()
         self.name = "service_manager"
         
+        # Watchdog durumu
+        self.watchdog_running = False
+        self.watchdog_task = None
+        self.service_heartbeats = {}
+        self.service_restart_attempts = {}
+        
         # Aktif servisler listesi
         self.active_services = [
             "user", "group", "reply", "gpt", "dm", "invite", "promo", 
             "announcement", "datamining", "message"
+        ]
+        
+        # Kritik servisler (mutlaka çalışması gerekenler)
+        self.critical_services = [
+            "user", "group", "dm", "invite", "promo", "announcement"
         ]
         
         # Bağımlılıkları tanımla
@@ -144,14 +155,8 @@ class ServiceManager:
             BaseService: Oluşturulan servis veya None
         """
         try:
-            # Servis oluştururken tüm gerekli parametreleri geçirin
-            service = self.service_factory.create_service(
-                service_type,
-                self.client, 
-                self.config,
-                self.db,
-                self.stop_event
-            )
+            # Servis oluştururken sadece servis tipini geçirin
+            service = self.service_factory.create_service(service_type)
             return service
         except Exception as e:
             logger.error(f"Servis oluşturma hatası ({service_type}): {str(e)}")
@@ -179,27 +184,61 @@ class ServiceManager:
                 logger.error(f"Servis referansı enjekte edilirken hata ({name}): {str(e)}")
                 
     async def initialize_service_communications(self):
-        """Servisleri birbirine bağlar."""
-        logger.info("Servisler arası iletişim ayarlanıyor")
+        """
+        Servisler arası iletişim için gerekli bağlantıları kurar.
+        """
+        try:
+            # Her servisin set_services metodu varsa, diğer servislere erişmesini sağla
+            for name, service in self.services.items():
+                if hasattr(service, 'set_services'):
+                    service.set_services(self.services)
+                    logger.debug(f"{name} servisi diğer servislere bağlandı")
+            
+            # User servisi özel entegrasyonları
+            if 'user' in self.services and 'dm' in self.services:
+                user_service = self.services['user']
+                dm_service = self.services['dm']
+                
+                if hasattr(user_service, 'set_dm_service'):
+                    user_service.set_dm_service(dm_service)
+                    logger.debug("User servisi DM servisine bağlandı")
+            
+            # Message servisi için grup servisi entegrasyonu
+            if 'message' in self.services and 'group' in self.services:
+                message_service = self.services['message']
+                group_service = self.services['group']
+                
+                if hasattr(message_service, 'set_group_service'):
+                    message_service.set_group_service(group_service)
+                    logger.debug("Message servisi Group servisine bağlandı")
+                
+                if hasattr(group_service, 'set_message_service'):
+                    group_service.set_message_service(message_service)
+                    logger.debug("Group servisi Message servisine bağlandı")
+            
+            # DataMining servisi için özel entegrasyon
+            if 'datamining' in self.services:
+                datamining_service = self.services['datamining']
+                
+                # Eğer fonksiyon varsa grup ve kullanıcı verilerini toplamayı başlat
+                if hasattr(datamining_service, 'start_data_collection_task'):
+                    data_collection_task = asyncio.create_task(datamining_service.start_data_collection_task())
+                    data_collection_task.set_name(f"datamining_collection_task")
+                    self.tasks.append(data_collection_task)
+                    logger.info("DataMining servisi kalıcı veri toplama görevini başlattı")
+            
+            # Announcement servisi için grup servisi
+            if 'announcement' in self.services and 'group' in self.services:
+                announcement_service = self.services['announcement']
+                
+                if hasattr(announcement_service, 'set_services'):
+                    announcement_service.set_services(self.services)
+                    logger.debug("Announcement servisi diğer servislere bağlandı")
+            
+        except Exception as e:
+            logger.error(f"Servisler arası iletişim kurulurken hata: {str(e)}")
+            logger.debug(traceback.format_exc())
         
-        # Her servise diğer servislere referans ver
-        for name, service in self.services.items():
-            if service is None:
-                logger.warning(f"Servis bulunamadı: {name}")
-                continue
-                
-            if hasattr(service, 'set_services'):
-                try:
-                    # Asenkron set_services varsa
-                    if asyncio.iscoroutinefunction(service.set_services):
-                        await service.set_services(self.services)
-                    else:
-                        # Normal metot ise doğrudan çağır
-                        service.set_services(self.services)
-                    logger.debug(f"Servis referansları enjekte edildi: {name}")
-                except Exception as e:
-                    logger.error(f"Servis iletişim hatası ({name}): {str(e)}")
-                
     async def start_services(self) -> None:
         """
         Tüm servisleri başlatır. Bağımlılıkları göz önünde bulundurarak sıralı başlatma yapar.
@@ -243,6 +282,12 @@ class ServiceManager:
         
         # Servisler arası iletişimi başlat
         await self.initialize_service_communications()
+        
+        # Watchdog'u başlat
+        await self.start_watchdog()
+        
+        # Kritik servislerin çalıştığından emin ol
+        await self.enforce_critical_services()
                 
     async def start_service(self, service_name):
         """
@@ -335,6 +380,9 @@ class ServiceManager:
         Returns:
             None
         """
+        # Önce watchdog'u durdur
+        await self.stop_watchdog()
+        
         # Durdurma sırasını belirle (başlatma sırasının tersi)
         stop_order = self._determine_start_order()
         stop_order.reverse()  # Tersten
@@ -511,6 +559,7 @@ class ServiceManager:
             
         except Exception as e:
             logger.error(f"Servis yeniden başlatma hatası ({service_name}): {str(e)}")
+            logger.debug(traceback.format_exc())
             return False
 
     async def validate_templates(self):
@@ -567,3 +616,171 @@ class ServiceManager:
             bool: Servis mevcutsa True
         """
         return service_name in self.services
+
+    async def start_watchdog(self):
+        """
+        Servis watchdog'u başlatır. Watchdog, servislerin düzgün çalışıp çalışmadığını
+        düzenli olarak kontrol eder ve herhangi bir servis çöktüğünde onu otomatik olarak
+        yeniden başlatır.
+        """
+        if self.watchdog_running:
+            logger.warning("Watchdog zaten çalışıyor")
+            return
+            
+        logger.info("Servis watchdog başlatılıyor")
+        
+        # Tüm servislerin başlangıç heartbeat'ini ayarla
+        now = datetime.now()
+        for name in self.services.keys():
+            self.service_heartbeats[name] = now
+            self.service_restart_attempts[name] = 0
+            
+        # Watchdog task'ı başlat
+        self.watchdog_running = True
+        self.watchdog_task = asyncio.create_task(self._watchdog_loop())
+        self.watchdog_task.set_name("service_watchdog_task")
+        
+    async def stop_watchdog(self):
+        """Watchdog'u durdurur."""
+        if not self.watchdog_running:
+            return
+            
+        logger.info("Servis watchdog durduruluyor")
+        self.watchdog_running = False
+        
+        if self.watchdog_task and not self.watchdog_task.done():
+            self.watchdog_task.cancel()
+            try:
+                await self.watchdog_task
+            except asyncio.CancelledError:
+                pass
+            
+        self.watchdog_task = None
+
+    async def _watchdog_loop(self):
+        """
+        Watchdog ana döngüsü. Düzenli aralıklarla servislerin durumunu kontrol eder
+        ve gerekirse yeniden başlatır.
+        """
+        CHECK_INTERVAL = 5  # 5 saniyede bir kontrol et (önceden 30 idi)
+        MAX_SERVICE_SILENCE = 30  # 30 saniye yanıt vermezse yeniden başlat (önceden 300/5 dakika idi)
+        MAX_RESTART_ATTEMPTS = 10  # Maksimum 10 kez yeniden başlatmayı dene (önceden 3 idi)
+        
+        try:
+            while self.watchdog_running and not self.stop_event.is_set():
+                await asyncio.sleep(CHECK_INTERVAL)
+                
+                # Servisleri kontrol et
+                now = datetime.now()
+                for name, service in self.services.items():
+                    try:
+                        # Servis durumunu kontrol et
+                        if not service or not hasattr(service, 'running'):
+                            continue
+                            
+                        # Kritik servisleri zorunla
+                        if name in self.critical_services:
+                            # Servis çalışmıyorsa yeniden başlat
+                            if not service.running:
+                                logger.warning(f"Kritik servis çalışmıyor: {name}, yeniden başlatılıyor")
+                                await self.restart_service(name)
+                                self.service_restart_attempts[name] += 1
+                                continue
+                        
+                        # Task kontrolü
+                        task_found = False
+                        for task in self.tasks:
+                            if task.get_name() == f"service_task_{name}":
+                                task_found = True
+                                if task.done() or task.cancelled():
+                                    logger.warning(f"Servis görevi tamamlanmış veya iptal edilmiş: {name}, yeniden başlatılıyor")
+                                    await self.restart_service(name)
+                                    self.service_restart_attempts[name] += 1
+                                break
+                        
+                        # Task bulunamadıysa servis için yeni task oluştur
+                        if not task_found and service.running:
+                            logger.warning(f"Servis görevi eksik: {name}, yeniden oluşturuluyor")
+                            task = asyncio.create_task(service.run())
+                            task.set_name(f"service_task_{name}")
+                            self.tasks.append(task)
+                            
+                        # Servis yanıt vermiyor mu kontrol et
+                        last_heartbeat = self.service_heartbeats.get(name, now)
+                        silence_duration = (now - last_heartbeat).total_seconds()
+                        
+                        if silence_duration > MAX_SERVICE_SILENCE:
+                            # Çok uzun süredir yanıt yok, yeniden başlat
+                            if self.service_restart_attempts[name] < MAX_RESTART_ATTEMPTS:
+                                logger.warning(f"Servis yanıt vermiyor: {name} ({silence_duration:.0f}s), yeniden başlatılıyor")
+                                await self.restart_service(name)
+                                self.service_heartbeats[name] = now  # Heartbeat güncelle
+                                self.service_restart_attempts[name] += 1
+                            else:
+                                logger.error(f"Servis tekrar tekrar başarısız: {name}, {MAX_RESTART_ATTEMPTS} kez denendi")
+                                # Kritik servis ise ısrarla yeniden dene
+                                if name in self.critical_services:
+                                    logger.warning(f"Kritik servis {name} tekrar başlatılmaya zorlanıyor")
+                                    self.service_restart_attempts[name] = 0  # Sayacı sıfırla
+                                    await self.restart_service(name)
+                        
+                    except Exception as e:
+                        logger.error(f"Watchdog servis kontrolü sırasında hata ({name}): {str(e)}")
+                        
+                # Servis istatistiklerini güncelleyerek dolaylı olarak heartbeat olarak kullan
+                try:
+                    await self.update_service_heartbeats()
+                except Exception as e:
+                    logger.error(f"Heartbeat güncellemesi sırasında hata: {str(e)}")
+                    
+        except asyncio.CancelledError:
+            logger.info("Watchdog görevi iptal edildi")
+        except Exception as e:
+            logger.error(f"Watchdog döngüsünde hata: {str(e)}")
+            logger.debug(traceback.format_exc())
+    
+    async def update_service_heartbeats(self):
+        """Her servisin heartbeat'ini günceller."""
+        now = datetime.now()
+        for name, service in self.services.items():
+            try:
+                if hasattr(service, 'get_status'):
+                    # Servis durumu alınarak heartbeat güncellenir
+                    await service.get_status()
+                    self.service_heartbeats[name] = now
+            except Exception as e:
+                logger.debug(f"Servis heartbeat güncellemesi başarısız ({name}): {str(e)}")
+    
+    async def enforce_critical_services(self):
+        """
+        Kritik servislerin çalıştığından emin olur.
+        Eğer herhangi bir kritik servis eksikse, onu oluşturur ve başlatır.
+        """
+        for service_name in self.critical_services:
+            if service_name not in self.services or self.services[service_name] is None:
+                logger.warning(f"Kritik servis {service_name} eksik, oluşturuluyor")
+                
+                # Servisi tekrar oluştur
+                try:
+                    # Servisi oluştur
+                    service = self.service_factory.create_service(service_name)
+                    
+                    if service:
+                        # Servisi kaydedip başlat
+                        self.services[service_name] = service
+                        
+                        # Servisi initialize et ve başlat
+                        await service.initialize()
+                        await service.start()
+                        
+                        # Run için task oluştur
+                        task = asyncio.create_task(service.run())
+                        task.set_name(f"service_task_{service_name}")
+                        self.tasks.append(task)
+                        
+                        logger.info(f"Kritik servis {service_name} başarıyla yeniden başlatıldı")
+                    else:
+                        logger.error(f"Kritik servis {service_name} oluşturulamadı")
+                except Exception as e:
+                    logger.error(f"Kritik servis {service_name} oluşturma hatası: {str(e)}")
+                    logger.debug(traceback.format_exc())

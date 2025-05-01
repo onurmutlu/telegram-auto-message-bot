@@ -1,4 +1,4 @@
-.PHONY: test clean lint install run run-clean clean-logs clean-cache
+.PHONY: test clean lint install run run-clean clean-logs clean-cache help migrate update_env setup_pg test_pg_connection test-pg full-migrate
 
 # Değişkenler
 PYTHON = python
@@ -66,3 +66,58 @@ run:
 run-clean: clean
     @echo "🤖 Temizlik sonrası bot başlatılıyor..."
     python main.py
+
+# Veritabanı geçiş komutları
+
+help:
+	@echo "Telegram Bot PostgreSQL Geçiş Komutları"
+	@echo "---------------------------------"
+	@echo "migrate               : SQLite'dan PostgreSQL'e veri taşıma işlemini başlatır"
+	@echo "update_env            : .env dosyasını PostgreSQL için günceller"
+	@echo "setup_pg              : PostgreSQL bağlantısını ayarlar ve tabloları oluşturur"
+	@echo "test_pg_connection    : PostgreSQL bağlantısını test eder"
+	@echo "update_user_activities: Kullanıcı aktivite loglarını günceller"
+
+migrate:
+	@echo "SQLite'dan PostgreSQL'e veri taşınıyor..."
+	python database/sqlite_to_postgres.py
+
+update_env:
+	@echo "PostgreSQL bağlantı bilgileri .env dosyasına ekleniyor..."
+	@if grep -q "POSTGRES_HOST" .env; then \
+		echo "PostgreSQL bağlantı bilgileri zaten mevcut"; \
+	else \
+		echo "# PostgreSQL bağlantı bilgileri" >> .env; \
+		echo "POSTGRES_HOST=localhost" >> .env; \
+		echo "POSTGRES_PORT=5432" >> .env; \
+		echo "POSTGRES_DB=telegram_bot" >> .env; \
+		echo "POSTGRES_USER=postgres" >> .env; \
+		echo "POSTGRES_PASSWORD=" >> .env; \
+		echo "# Varsayılan bağlantı tipini PostgreSQL olarak ayarla" >> .env; \
+		echo "DB_CONNECTION=postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)" >> .env; \
+		echo ".env dosyası güncellendi"; \
+	fi
+
+setup_pg:
+	@echo "PostgreSQL tabloları oluşturuluyor..."
+	python -c "from database.db_connection import DatabaseConnectionManager; import asyncio; mgr = DatabaseConnectionManager(); asyncio.run(mgr.initialize())"
+
+test_pg_connection:
+	@echo "PostgreSQL bağlantısı test ediliyor..."
+	python -c "import psycopg2; import os; from dotenv import load_dotenv; load_dotenv(); conn = psycopg2.connect(host=os.getenv('POSTGRES_HOST', 'localhost'), port=os.getenv('POSTGRES_PORT', '5432'), dbname=os.getenv('POSTGRES_DB', 'telegram_bot'), user=os.getenv('POSTGRES_USER', 'postgres'), password=os.getenv('POSTGRES_PASSWORD', '')); print('Bağlantı başarılı!'); conn.close()"
+
+test-pg:
+	@echo "PostgreSQL veritabanı işlevlerini test ediliyor..."
+	python test_pg_connection.py
+
+update_user_activities:
+	@echo "Kullanıcı aktivite logları güncelleniyor..."
+	python update_user_activities.py
+
+full-migrate: update_env test_pg_connection setup_pg migrate test-pg update_user_activities
+	@echo "PostgreSQL'e tam geçiş tamamlandı!"
+	@echo "Eski SQLite veritabanınızı yedeklemeyi unutmayın:"
+	@echo "cp data/users.db data/users.db.bak"
+	@echo ""
+	@echo "PostgreSQL bağlantısını test etmek için:"
+	@echo "make test-pg"

@@ -1,33 +1,102 @@
 {
-  "flirty": [
-    "Beni güldürmeyi başardın, tebrikler! 😊",
-    "Bu espri anlayışın çok hoş! 🎈",
-    "Seninle sohbet etmek çok eğlenceli... 🎪",
-    "Sen bayağı eğlenceli birisin! 🎭",
-    "Bu muhabbeti sevdim... 🎨",
-    
-    "Hmm, ilginç bir bakış açısı... Devam et... 💫",
-    "Seni dinlerken zaman nasıl geçiyor anlamıyorum ✨",
-    "Böyle diyaloglar her zaman ilgimi çeker... 🌙",
-    "Bu bakış açın beni etkiledi... 🦋",
-    "Seninle konuşmak farklı bir deneyim... 🌟",
-    
-    "Zekice bir yaklaşım... Etkilendim! ⭐️",
-    "Bu zekanla beni şaşırtıyorsun... 💫",
-    "Çok tatlı bir yaklaşımın var... 🌸",
-    "Senin gibi düşünen biriyle tanışmak güzel... 🌺",
-    "İlginç fikirlerin var, devam et... 🎡",
-    
-    "Anlattıkların ilgimi çekiyor... 🦋",
-    "Seni daha fazla dinlemek isterim... 🌷",
-    "Bu konuda neler düşünüyorsun? 💭",
-    "Bakış açın çok değerli... 🌈",
-    "Seninle sohbet etmek keyifli... ☘️",
-    
-    "Ne güzel ifade etmişsin... 🍀",
-    "Düşüncelerini paylaşman hoşuma gitti... 🌸",
-    "Böyle yaklaşımlar her zaman değerli... 💫",
-    "Seninle aynı frekanstayız sanki... ✨",
-    "Bu yaklaşımını beğendim... 🎭"
-  ]
+  "1": {
+    "content": "Beni güldürmeyi başardın, tebrikler! 😊",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "2": {
+    "content": "Bu espri anlayışın çok hoş! 🎈",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "3": {
+    "content": "Seninle sohbet etmek çok eğlenceli... 🎪",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "4": {
+    "content": "Sen bayağı eğlenceli birisin! 🎭",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "5": {
+    "content": "Bu muhabbeti sevdim... 🎨",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "6": {
+    "content": "Hmm, ilginç bir bakış açısı... Devam et... 💫",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "7": {
+    "content": "Seni dinlerken zaman nasıl geçiyor anlamıyorum ✨",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "8": {
+    "content": "Böyle diyaloglar her zaman ilgimi çeker... 🌙",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "9": {
+    "content": "Bu bakış açın beni etkiledi... 🦋",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "10": {
+    "content": "Seninle konuşmak farklı bir deneyim... 🌟",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "11": {
+    "content": "Zekice bir yaklaşım... Etkilendim! ⭐️",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "12": {
+    "content": "Bu zekanla beni şaşırtıyorsun... 💫",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "13": {
+    "content": "Çok tatlı bir yaklaşımın var... 🌸",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "14": {
+    "content": "Senin gibi düşünen biriyle tanışmak güzel... 🌺",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "15": {
+    "content": "İlginç fikirlerin var, devam et... 🎡",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "16": {
+    "content": "Anlattıkların ilgimi çekiyor... 🦋",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "17": {
+    "content": "Seni daha fazla dinlemek isterim... 🌷",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "18": {
+    "content": "Bu konuda neler düşünüyorsun? 💭",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "19": {
+    "content": "Bakış açın çok değerli... 🌈",
+    "category": "flirty",
+    "language": "tr"
+  },
+  "20": {
+    "content": "Seninle sohbet etmek keyifli... ☘️",
+    "category": "flirty",
+    "language": "tr"
+  }
 }

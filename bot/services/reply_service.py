@@ -54,6 +54,13 @@ class ReplyService(BaseService):
         self.reply_count = 0
         self.mention_stats: Dict[int, int] = {}  # chat_id -> mention sayısı
         self.services = {}  # Diğer servislere referans
+        self.replies = {}
+        self.keywords = {}
+        self.last_update = datetime.now()
+        self.stats = {
+            'total_replies': 0,
+            'last_reply': None
+        }
         
     def set_services(self, services: Dict[str, Any]) -> None:
         """
@@ -340,6 +347,21 @@ class ReplyService(BaseService):
             
         await event.reply(stats_text)
         
+    async def start(self) -> bool:
+        """
+        Servisi başlatır.
+        
+        Returns:
+            bool: Başarılı ise True
+        """
+        if not self.initialized:
+            await self.initialize()
+            
+        self.is_running = True
+        self.start_time = datetime.now()
+        logger.info(f"{self.service_name} servisi başlatıldı.")
+        return True
+        
     async def stop(self) -> None:
         """
         Servisi güvenli bir şekilde durdurur.
@@ -347,17 +369,151 @@ class ReplyService(BaseService):
         Returns:
             None
         """
-        self.running = False
-        logger.info("Reply servisi durduruluyor...")
+        # Önce durum değişkenini güncelle
+        self.is_running = False
         
-        # Event handler'ları kaldır
-        self.client.remove_event_handler(self.handle_new_message)
-        
-        # İstatistikleri kaydet
-        if hasattr(self.db, 'save_mention_stats'):
-            await self._run_async_db_method(self.db.save_mention_stats, self.mention_stats)
+        # Durdurma sinyalini ayarla (varsa)
+        if hasattr(self, 'stop_event') and self.stop_event:
+            self.stop_event.set()
             
-        await super().stop()
+        # Diğer durdurma sinyallerini de kontrol et
+        if hasattr(self, 'shutdown_event'):
+            self.shutdown_event.set()
+        
+        # Çalışan görevleri iptal et
+        try:
+            service_tasks = [task for task in asyncio.all_tasks() 
+                        if (task.get_name().startswith(f"{self.name}_task_") or
+                            task.get_name().startswith(f"{self.service_name}_task_")) and 
+                        not task.done() and not task.cancelled()]
+                        
+            for task in service_tasks:
+                task.cancel()
+                
+            # Kısa bir süre bekle
+            try:
+                await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                pass
+                
+            # İptal edilen görevlerin tamamlanmasını kontrol et
+            if service_tasks:
+                await asyncio.wait(service_tasks, timeout=2.0)
+        except Exception as e:
+            logger.error(f"{self.service_name} görevleri iptal edilirken hata: {str(e)}")
+            
+        logger.info(f"{self.service_name} servisi durduruldu.")
+        
+    async def _load_replies(self):
+        """Yanıt verilerini yükler"""
+        try:
+            replies = await self.db.fetchall("SELECT * FROM replies")
+            for reply in replies:
+                self.replies[reply['id']] = reply
+                
+            logger.info(f"{len(self.replies)} yanıt yüklendi")
+            
+        except Exception as e:
+            logger.error(f"Yanıt verileri yüklenirken hata: {str(e)}")
+            
+    async def _load_keywords(self):
+        """Anahtar kelimeleri yükler"""
+        try:
+            keywords = await self.db.fetchall("SELECT * FROM keywords")
+            for keyword in keywords:
+                if keyword['reply_id'] not in self.keywords:
+                    self.keywords[keyword['reply_id']] = []
+                self.keywords[keyword['reply_id']].append(keyword['keyword'])
+                
+            logger.info(f"{len(keywords)} anahtar kelime yüklendi")
+            
+        except Exception as e:
+            logger.error(f"Anahtar kelimeler yüklenirken hata: {str(e)}")
+            
+    async def get_reply(self, message_text):
+        """Mesaj metnine göre uygun yanıtı getirir"""
+        try:
+            for reply_id, keywords in self.keywords.items():
+                for keyword in keywords:
+                    if keyword.lower() in message_text.lower():
+                        return self.replies[reply_id]
+            return None
+            
+        except Exception as e:
+            logger.error(f"Yanıt getirilirken hata: {str(e)}")
+            return None
+            
+    async def add_reply(self, reply_data):
+        """Yeni yanıt ekler"""
+        try:
+            reply_id = await self.db.execute(
+                "INSERT INTO replies (content, is_active) VALUES ($1, $2) RETURNING id",
+                reply_data['content'],
+                reply_data.get('is_active', True)
+            )
+            
+            if 'keywords' in reply_data:
+                for keyword in reply_data['keywords']:
+                    await self.db.execute(
+                        "INSERT INTO keywords (reply_id, keyword) VALUES ($1, $2)",
+                        reply_id,
+                        keyword
+                    )
+                    
+            await self._load_replies()
+            await self._load_keywords()
+            
+            logger.debug(f"Yeni yanıt eklendi: {reply_id}")
+            return reply_id
+            
+        except Exception as e:
+            logger.error(f"Yanıt eklenirken hata: {str(e)}")
+            return None
+            
+    async def update_reply(self, reply_id, reply_data):
+        """Yanıtı günceller"""
+        try:
+            await self.db.execute(
+                "UPDATE replies SET content = $1, is_active = $2 WHERE id = $3",
+                reply_data['content'],
+                reply_data.get('is_active', True),
+                reply_id
+            )
+            
+            if 'keywords' in reply_data:
+                await self.db.execute("DELETE FROM keywords WHERE reply_id = $1", reply_id)
+                for keyword in reply_data['keywords']:
+                    await self.db.execute(
+                        "INSERT INTO keywords (reply_id, keyword) VALUES ($1, $2)",
+                        reply_id,
+                        keyword
+                    )
+                    
+            await self._load_replies()
+            await self._load_keywords()
+            
+            logger.debug(f"Yanıt güncellendi: {reply_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Yanıt güncellenirken hata: {str(e)}")
+            return False
+            
+    async def delete_reply(self, reply_id):
+        """Yanıtı siler"""
+        try:
+            await self.db.execute("DELETE FROM keywords WHERE reply_id = $1", reply_id)
+            await self.db.execute("DELETE FROM replies WHERE id = $1", reply_id)
+            
+            await self._load_replies()
+            await self._load_keywords()
+            
+            logger.debug(f"Yanıt silindi: {reply_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Yanıt silinirken hata: {str(e)}")
+            return False
         
     async def get_status(self) -> Dict[str, Any]:
         """

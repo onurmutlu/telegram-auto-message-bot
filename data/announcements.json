@@ -1,90 +1,92 @@
 {
-  "own_groups": {
-    "promotion": [
-      "📢 **YENİ DUYURU**: Telegram gruplarımız büyümeye devam ediyor! Arkadaşlarınızı davet etmeyi unutmayın 👥",
-      "🚀 **HEDEFİMİZ**: Bu ay 5000 yeni üyeye ulaşmayı hedefliyoruz! Destekleriniz için teşekkürler 💪",
-      "📈 **BÜYÜYORUZ**: Her gün daha fazla aktif kullanıcıya ulaşıyoruz. Telegram'ın en büyük Türk topluluğu olmak için ilerliyoruz! 🔝"
-    ],
-    "services": [
-      "🔧 **YENİ SERVİSİMİZ**: Özel bot hizmetimizle artık grupta kayıp mesajları takip edebilirsiniz! Detaylar için: @admin",
-      "💼 **İŞ FIRSATI**: Ekibimize moderatör arıyoruz! İlgilenenler @admin ile iletişime geçebilir",
-      "⚙️ **SERVİS GÜNCELLEMESİ**: Bot sistemimiz yeni özellikleriyle artık daha hızlı ve güvenli! Detaylar: t.me/{}"
-    ],
-    "showcase": [
-      "🤖 **YENİ BOT**: Tanışın - @SuperBot! Grubunuzu yönetmek için tüm ihtiyacınız olan özelliklerle donatıldı",
-      "🎮 **OYUN BOTU**: Sohbet sırasında eğlenmek için @GameBot'u grubunuza ekleyin!",
-      "📱 **MOBİL UYGULAMAMIZ**: Telegram gruplarımıza özel geliştirdiğimiz uygulamamız yayında! İndirmek için: link.app/{}"
-    ],
-    "ads": [
-      "📣 **REKLAM FIRSATI**: Grubumuzda reklam vermek ister misiniz? Günlük 10.000+ görüntülenme! İletişim: @admin",
-      "🛒 **E-TİCARET**: Online mağazamızda %50'ye varan indirimler başladı! Ziyaret etmek için: shop.link/{}",
-      "🏆 **SPONSORLUK**: Etkinliklerimize sponsor olmak için: @sponsor_admin"
-    ]
+  "1": {
+    "content": "📢 **YENİ DUYURU**: Telegram gruplarımız büyümeye devam ediyor! Arkadaşlarınızı davet etmeyi unutmayın 👥",
+    "category": "promotion",
+    "group_type": "own_groups",
+    "language": "tr"
   },
-  "safe_groups": {
-    "promotion": [
-      "Merhaba dostlar! Yeni açılan grubumuzda sizleri de görmek isteriz: t.me/{}",
-      "Aradığınız kaliteli sohbet için: t.me/{} - Bekleriz! 😊",
-      "Telegram'ın en samimi topluluğu sizi bekliyor: t.me/{} 🌟"
-    ],
-    "services": [
-      "Aradığınız tüm hizmetler artık bir tık uzağınızda. Detaylar: t.me/{}",
-      "Yeni başlattığımız servis ile ihtiyaçlarınıza çözüm sunuyoruz: t.me/{}",
-      "Online yardım servisimiz 7/24 aktif! İhtiyaç duyduğunuzda: t.me/{}"
-    ],
-    "showcase": [
-      "Yeni botlarımızdan haberiniz var mı? Tüm detaylar için: t.me/{}",
-      "Ürünlerimizi görmek için showcase kanalımıza bekleriz: t.me/{}",
-      "En yeni teknolojilerimizi keşfedin: t.me/{}"
-    ],
-    "ads": [
-      "Sınırlı süre için özel fırsatlar! Detaylar: t.me/{}",
-      "Aradığınız ürünler uygun fiyatlarla: t.me/{}",
-      "Kampanyalarımızı kaçırmayın, takipte kalın: t.me/{}"
-    ]
+  "2": {
+    "content": "🚀 **HEDEFİMİZ**: Bu ay 5000 yeni üyeye ulaşmayı hedefliyoruz! Destekleriniz için teşekkürler 💪",
+    "category": "promotion",
+    "group_type": "own_groups",
+    "language": "tr"
   },
-  "risky_groups": {
-    "promotion": [
-      "Selam! Sohbet için: t.me/{} 👋",
-      "Yeni arkadaşlar edinmek için: t.me/{} ✌️",
-      "Burada mısın? Bizde de takıl: t.me/{}"
-    ],
-    "services": [
-      "Aramızda servis arayanlar var mı? t.me/{} 🔍",
-      "İhtiyacınız olan her şey için: t.me/{} 👍",
-      "Çözüm arıyorsan doğru yerdesin: t.me/{}"
-    ],
-    "showcase": [
-      "Bir göz at derim: t.me/{} 👀",
-      "Belki ilgini çeker: t.me/{} 🎯",
-      "Bunu görmek isteyebilirsin: t.me/{}"
-    ],
-    "ads": [
-      "Fırsat arayanlar için: t.me/{} 🎁",
-      "Ucuza almak isteyenler için: t.me/{} 💰",
-      "Özel indirimler seni bekliyor: t.me/{} 🛒"
-    ]
+  "3": {
+    "content": "📈 **BÜYÜYORUZ**: Her gün daha fazla aktif kullanıcıya ulaşıyoruz. Telegram'ın en büyük Türk topluluğu olmak için ilerliyoruz! 🔝",
+    "category": "promotion",
+    "group_type": "own_groups",
+    "language": "tr"
   },
-  "high_traffic_groups": {
-    "promotion": [
-      "Hey, aktif bir sohbet arıyorsan: t.me/{} 🔥",
-      "Kalabalık değil, kaliteli sohbet için: t.me/{} 💯",
-      "En canlı muhabbet burada: t.me/{} ⚡"
-    ],
-    "services": [
-      "Aradığın hizmeti sunuyoruz! t.me/{} 🌟",
-      "Kaliteli hizmet, uygun fiyat: t.me/{} 💼",
-      "Profesyonel destek için: t.me/{} 🔧"
-    ],
-    "showcase": [
-      "Yeni ürünlerimizle tanışın: t.me/{} 🆕",
-      "En çok talep gören botlarımız: t.me/{} 🤖",
-      "Yeni teknolojilerimizi deneyin: t.me/{} 📱"
-    ],
-    "ads": [
-      "Kaçırılmayacak fırsatlar seni bekliyor: t.me/{} 💸",
-      "En iyi fiyatlar sadece bizde: t.me/{} 🏷️",
-      "Özel indirimli ürünler için tıkla: t.me/{} 🛍️"
-    ]
+  "4": {
+    "content": "🔧 **YENİ SERVİSİMİZ**: Özel bot hizmetimizle artık grupta kayıp mesajları takip edebilirsiniz! Detaylar için: @admin",
+    "category": "services",
+    "group_type": "own_groups",
+    "language": "tr"
+  },
+  "5": {
+    "content": "💼 **İŞ FIRSATI**: Ekibimize moderatör arıyoruz! İlgilenenler @admin ile iletişime geçebilir",
+    "category": "services",
+    "group_type": "own_groups",
+    "language": "tr"
+  },
+  "6": {
+    "content": "⚙️ **SERVİS GÜNCELLEMESİ**: Bot sistemimiz yeni özellikleriyle artık daha hızlı ve güvenli! Detaylar: t.me/{}",
+    "category": "services",
+    "group_type": "own_groups",
+    "language": "tr"
+  },
+  "7": {
+    "content": "🤖 **YENİ BOT**: Tanışın - @SuperBot! Grubunuzu yönetmek için tüm ihtiyacınız olan özelliklerle donatıldı",
+    "category": "showcase",
+    "group_type": "own_groups",
+    "language": "tr"
+  },
+  "8": {
+    "content": "Merhaba dostlar! Yeni açılan grubumuzda sizleri de görmek isteriz: t.me/{}",
+    "category": "promotion",
+    "group_type": "safe_groups",
+    "language": "tr"
+  },
+  "9": {
+    "content": "Aradığınız kaliteli sohbet için: t.me/{} - Bekleriz! 😊",
+    "category": "promotion",
+    "group_type": "safe_groups",
+    "language": "tr"
+  },
+  "10": {
+    "content": "Selam! Sohbet için: t.me/{} 👋",
+    "category": "promotion",
+    "group_type": "risky_groups",
+    "language": "tr"
+  },
+  "11": {
+    "content": "Hey, aktif bir sohbet arıyorsan: t.me/{} 🔥",
+    "category": "promotion",
+    "group_type": "high_traffic_groups",
+    "language": "tr"
+  },
+  "12": {
+    "content": "Kalabalık değil, kaliteli sohbet için: t.me/{} 💯",
+    "category": "promotion",
+    "group_type": "high_traffic_groups",
+    "language": "tr"
+  },
+  "13": {
+    "content": "📣 **REKLAM FIRSATI**: Grubumuzda reklam vermek ister misiniz? Günlük 10.000+ görüntülenme! İletişim: @admin",
+    "category": "ads",
+    "group_type": "own_groups",
+    "language": "tr"
+  },
+  "14": {
+    "content": "🛒 **E-TİCARET**: Online mağazamızda %50'ye varan indirimler başladı! Ziyaret etmek için: shop.link/{}",
+    "category": "ads",
+    "group_type": "own_groups",
+    "language": "tr"
+  },
+  "15": {
+    "content": "Aradığınız tüm hizmetler artık bir tık uzağınızda. Detaylar: t.me/{}",
+    "category": "services",
+    "group_type": "safe_groups",
+    "language": "tr"
   }
 }

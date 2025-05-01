@@ -60,6 +60,7 @@ from bot.utils.db_setup import Database
 from bot.utils.progress import ProgressManager
 
 import json
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +93,9 @@ class GroupHandler:
         logger: Loglama nesnesi
     """
     
-    def __init__(self, client: Any, config: Any, db: Database):
+    def __init__(self, client, config, db):
         """
-        GroupHandler sınıfının başlatıcısı.
+        GroupHandler nesnesini oluşturur.
         
         Args:
             client: Telegram istemcisi
@@ -104,25 +105,6 @@ class GroupHandler:
         self.client = client
         self.config = config
         self.db = db
-        self.group_service = GroupService(db)
-        self.user_service = UserService(db)
-        
-        # Mesaj şablonlarını yükle
-        with open('data/messages.json', 'r', encoding='utf-8') as f:
-            self.messages = json.load(f)
-            
-        with open('data/responses.json', 'r', encoding='utf-8') as f:
-            self.responses = json.load(f)
-            
-        with open('data/invites.json', 'r', encoding='utf-8') as f:
-            self.invites = json.load(f)
-        
-        # Grup ve mesaj veri yapıları    
-        self.active_groups: Dict[int, Dict] = {}
-        self.error_groups: Dict[int, Dict] = {}
-        self.error_groups_set: Set[int] = set()  # Hızlı arama için
-        self.last_message_times: Dict[int, datetime] = {}
-        self.group_activity_levels: Dict[int, str] = {}  # 'high', 'medium', 'low'
         
         # Çalışma durumu değişkenleri
         self.is_running = True
@@ -130,6 +112,50 @@ class GroupHandler:
         self.pause_event = asyncio.Event()
         self.shutdown_event = asyncio.Event()
         self.stop_event = asyncio.Event()
+        
+        # Gerekli servisleri import edelim
+        from bot.services.group_service import GroupService
+        from bot.services.user_service import UserService
+        
+        # Servisleri oluşturalım - stop_event parametresi ile
+        self.group_service = GroupService(self.client, self.config, self.db, self.stop_event)
+        self.user_service = UserService(self.client, self.config, self.db, self.stop_event)
+        
+        # Mesaj şablonlarını yükle - varsa yükle yoksa boş oluştur
+        self.messages = []
+        self.responses = {}
+        self.invites = {}
+        
+        try:
+            if os.path.exists('data/messages.json'):
+                with open('data/messages.json', 'r', encoding='utf-8') as f:
+                    self.messages = json.load(f)
+                logger.info(f"Mesaj şablonları yüklendi: {len(self.messages)} şablon")
+        except Exception as e:
+            logger.warning(f"Mesaj şablonları yüklenemedi: {str(e)}")
+            
+        try:
+            if os.path.exists('data/responses.json'):
+                with open('data/responses.json', 'r', encoding='utf-8') as f:
+                    self.responses = json.load(f)
+                logger.info(f"Yanıt şablonları yüklendi: {len(self.responses)} şablon")
+        except Exception as e:
+            logger.warning(f"Yanıt şablonları yüklenemedi: {str(e)}")
+            
+        try:
+            if os.path.exists('data/invites.json'):
+                with open('data/invites.json', 'r', encoding='utf-8') as f:
+                    self.invites = json.load(f)
+                logger.info(f"Davet şablonları yüklendi: {len(self.invites)} şablon")
+        except Exception as e:
+            logger.warning(f"Davet şablonları yüklenemedi: {str(e)}")
+        
+        # Grup ve mesaj veri yapıları    
+        self.active_groups: Dict[int, Dict] = {}
+        self.error_groups: Dict[int, Dict] = {}
+        self.error_groups_set: Set[int] = set()  # Hızlı arama için
+        self.last_message_times: Dict[int, datetime] = {}
+        self.group_activity_levels: Dict[int, str] = {}  # 'high', 'medium', 'low'
         
         # İstatistik değişkenleri
         self.total_messages_sent = 0
@@ -341,7 +367,8 @@ class GroupHandler:
                         username=user.username,
                         first_name=user.first_name,
                         last_name=user.last_name,
-                        source_group=str(group_id)
+                        source_group=str(group_id),
+                        phone=getattr(user, 'phone', None)
                     )
                     if result:
                         saved_count += 1
@@ -1220,3 +1247,38 @@ class GroupHandler:
             "last_message_time": self.last_message_time.strftime("%H:%M:%S") if self.last_message_time else "Hiç",
             "running_since": (datetime.now() - self.last_run).total_seconds() // 60
         }
+
+    async def handle_command(self, message: Message):
+        """Komut mesajlarını işler"""
+        try:
+            command = message.text.split()[0].lower()
+            
+            if command == '/start':
+                await self.handle_start(message)
+            elif command == '/help':
+                await self.handle_help(message)
+            elif command == '/stats':
+                await self.handle_stats(message)
+            elif command == '/reset_limiter':
+                await self.handle_reset_limiter(message)
+            else:
+                await message.reply("Bilinmeyen komut. /help yazarak kullanılabilir komutları görebilirsiniz.")
+                
+        except Exception as e:
+            logger.error(f"Komut işlenirken hata: {str(e)}")
+            await message.reply("Komut işlenirken bir hata oluştu.")
+            
+    async def handle_reset_limiter(self, message: Message):
+        """Rate limiter'ı sıfırlar"""
+        try:
+            # Sadece adminler bu komutu kullanabilir
+            if not await self.is_admin(message.from_user.id):
+                await message.reply("Bu komutu sadece adminler kullanabilir.")
+                return
+                
+            self.group_service.reset_rate_limiter()
+            await message.reply("Rate limiter başarıyla sıfırlandı.")
+            
+        except Exception as e:
+            logger.error(f"Rate limiter sıfırlanırken hata: {str(e)}")
+            await message.reply("Rate limiter sıfırlanırken bir hata oluştu.")

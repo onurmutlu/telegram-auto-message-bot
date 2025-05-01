@@ -34,6 +34,11 @@ from colorama import Fore, Style
 from tabulate import tabulate
 from telethon import errors
 from bot.utils.rate_limiter import RateLimiter 
+from celery import shared_task
+from sqlalchemy import select
+from database.models import Group
+from database.database import get_db
+from bot.telegram_bot import TelegramBot
 
 logger = logging.getLogger(__name__)
 
@@ -421,3 +426,96 @@ class BotTasks:
             else:
                 await self.bot.interruptible_sleep(5)  # Diğer hatalar için kısa bekle
             return False
+
+@shared_task(bind=True, name='discover_groups')
+def discover_groups(self):
+    """Grup keşfi görevi"""
+    try:
+        db = next(get_db())
+        bot = TelegramBot()
+        
+        # Aktif grupları al
+        groups = db.execute(
+            select(Group).where(Group.is_active == True)
+        ).scalars().all()
+        
+        for group in groups:
+            try:
+                # Grup bilgilerini güncelle
+                group_info = bot.get_group_info(group.group_id)
+                if group_info:
+                    group.name = group_info.name
+                    group.member_count = group_info.member_count
+                    group.last_message = group_info.last_message
+                    db.commit()
+            except Exception as e:
+                logger.error(f"Grup {group.group_id} güncellenirken hata: {str(e)}")
+                group.error_count += 1
+                group.last_error = str(e)
+                db.commit()
+                
+    except Exception as e:
+        logger.error(f"Grup keşfi sırasında hata: {str(e)}")
+        raise self.retry(exc=e, countdown=300)  # 5 dakika sonra tekrar dene
+
+@shared_task(bind=True, name='send_messages')
+def send_messages(self):
+    """Mesaj gönderme görevi"""
+    try:
+        db = next(get_db())
+        bot = TelegramBot()
+        
+        # Hedef grupları al
+        groups = db.execute(
+            select(Group).where(
+                Group.is_active == True,
+                Group.is_target == True,
+                Group.permanent_error == False
+            )
+        ).scalars().all()
+        
+        for group in groups:
+            try:
+                # Mesaj gönder
+                success = bot.send_message(group.group_id, "Test mesajı")
+                if success:
+                    group.message_count += 1
+                    group.error_count = 0
+                    db.commit()
+            except Exception as e:
+                logger.error(f"Grup {group.group_id} mesaj gönderilirken hata: {str(e)}")
+                group.error_count += 1
+                group.last_error = str(e)
+                if group.error_count >= 3:
+                    group.permanent_error = True
+                db.commit()
+                
+    except Exception as e:
+        logger.error(f"Mesaj gönderme sırasında hata: {str(e)}")
+        raise self.retry(exc=e, countdown=300)
+
+@shared_task(bind=True, name='update_stats')
+def update_stats(self):
+    """İstatistik güncelleme görevi"""
+    try:
+        db = next(get_db())
+        
+        # Genel istatistikleri hesapla
+        total_groups = db.execute(
+            select(Group)
+        ).scalars().all()
+        
+        active_groups = sum(1 for g in total_groups if g.is_active)
+        target_groups = sum(1 for g in total_groups if g.is_target)
+        error_groups = sum(1 for g in total_groups if g.permanent_error)
+        
+        logger.info(f"""
+        Toplam Grup: {len(total_groups)}
+        Aktif Grup: {active_groups}
+        Hedef Grup: {target_groups}
+        Hatalı Grup: {error_groups}
+        """)
+        
+    except Exception as e:
+        logger.error(f"İstatistik güncelleme sırasında hata: {str(e)}")
+        raise self.retry(exc=e, countdown=300)

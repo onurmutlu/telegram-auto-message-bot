@@ -95,17 +95,47 @@ class PromoService(BaseService):
         logger.info(f"Tanıtım servisi ayarları yüklendi: batch={self.batch_size}, interval={self.campaign_interval_minutes}dk")
     
     def _load_templates(self):
-        """Tanıtım mesaj şablonlarını yükler."""
+        """Tanıtım şablonlarını yükler."""
         try:
             # Şablon dosyası
             with open('data/promos.json', 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                self.promo_templates = data.get('templates', {})
+                
+                # Yeni format (1,2,3 ID'leri kullanılarak json nesnesi olarak saklanıyor)
+                if all(key.isdigit() or isinstance(key, int) for key in data.keys()):
+                    # Segmentlere göre şablonları ayır
+                    self.promo_templates = {
+                        'general': [],
+                        'new': [],
+                        'active': [],
+                        'inactive': [],
+                        'vip': [],
+                        'special_offer': [],
+                        'event': [],
+                        'seasonal': [],
+                        'new_feature': []
+                    }
+                    
+                    # Her şablonu ilgili segmente ekle
+                    for key, template in data.items():
+                        if isinstance(template, dict) and 'content' in template and 'category' in template:
+                            category = template['category']
+                            content = template['content']
+                            
+                            if category in self.promo_templates:
+                                self.promo_templates[category].append(content)
+                            else:
+                                # Bilinmeyen kategori ise genel kategoriye ekle
+                                self.promo_templates['general'].append(content)
+                else:
+                    # Eski format - tüm şablonları doğrudan al
+                    self.promo_templates = data
             
             # Segment bazlı şablon sayıları
             segments = ['new', 'active', 'inactive', 'vip', 'general']
             for segment in segments:
-                count = len(self.promo_templates.get(segment, []))
+                segment_templates = self.promo_templates.get(segment, [])
+                count = len(segment_templates)
                 logger.debug(f"{segment} segmenti için {count} şablon yüklendi")
                 
             # Genel şablonları kontrol et
@@ -256,6 +286,12 @@ class PromoService(BaseService):
         
         while self.running and not self.stop_event.is_set():
             try:
+                # auto_campaign seçeneği kapalıysa bekle
+                if not self.auto_campaign:
+                    logger.debug("Otomatik kampanya gönderimi devre dışı, 30 dakika bekliyor...")
+                    await asyncio.sleep(1800)  # 30 dakika bekle ve sonra tekrar kontrol et
+                    continue
+                
                 # Aktif kampanya kontrolü
                 if not self.active_campaign:
                     # Yeni bir kampanya seç
@@ -263,13 +299,36 @@ class PromoService(BaseService):
                 
                 if self.active_campaign:
                     # Kampanyayı çalıştır
-                    await self._run_campaign_batch(self.active_campaign)
+                    sent_count = await self._run_campaign_batch(self.active_campaign)
+                    logger.info(f"Kampanya {self.active_campaign} çalıştırıldı: {sent_count} mesaj gönderildi")
                     
                     # Kampanya tamamlandı mı?
-                    if await self._is_campaign_completed(self.active_campaign):
+                    is_completed = await self._is_campaign_completed(self.active_campaign)
+                    if is_completed:
                         logger.info(f"Kampanya tamamlandı: {self.active_campaign}")
                         await self._mark_campaign_completed(self.active_campaign)
                         self.active_campaign = None
+                else:
+                    logger.warning("Aktif kampanya seçilemedi. Kampanya yok veya tümü tamamlandı.")
+                    
+                    # Varsayılan kampanya oluştur
+                    if hasattr(self.db, 'create_campaign'):
+                        try:
+                            campaign_id = await self._run_async_db_method(
+                                self.db.create_campaign,
+                                {
+                                    'name': 'Otomatik Genel Tanıtım',
+                                    'segment': 'general',
+                                    'target_count': 100,
+                                    'batch_size': self.batch_size,
+                                    'active': True
+                                }
+                            )
+                            if campaign_id:
+                                logger.info(f"Yeni varsayılan kampanya oluşturuldu: {campaign_id}")
+                                await self._load_campaigns()  # Kampanyaları yeniden yükle
+                        except Exception as e:
+                            logger.error(f"Varsayılan kampanya oluşturma hatası: {str(e)}")
                 
                 # Bir sonraki kampanya veya iteme kadar bekle
                 interval = self.campaign_interval_minutes * 60
@@ -281,6 +340,7 @@ class PromoService(BaseService):
                 break
             except Exception as e:
                 logger.error(f"Kampanya döngüsünde hata: {str(e)}")
+                logger.debug(traceback.format_exc())
                 await asyncio.sleep(300)  # Hata durumunda 5 dakika bekle
     
     async def _select_next_campaign(self):
