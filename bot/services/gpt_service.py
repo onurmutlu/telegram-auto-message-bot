@@ -81,6 +81,9 @@ class GptService(BaseService):
     async def start(self):
         """Servisi başlatır"""
         try:
+            # Önce süper sınıfın start metodunu çağır
+            await super().start()
+            
             if self.running:
                 logger.warning("GPT servisi zaten çalışıyor")
                 return True

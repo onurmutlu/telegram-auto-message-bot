@@ -35,7 +35,7 @@ class ReplyService(BaseService):
         mention_stats: Mention istatistikleri
     """
     
-    def __init__(self, client: Any, config: Any, db: Any, stop_event: asyncio.Event):
+    def __init__(self, client: Any, config: Any, db: Any, stop_event: asyncio.Event = None):
         """
         ReplyService sınıfının başlatıcısı.
         
@@ -46,6 +46,9 @@ class ReplyService(BaseService):
             stop_event: Durdurma sinyali için asyncio.Event nesnesi
         """
         super().__init__("reply", client, config, db, stop_event)
+        
+        # Çalışma durumu
+        self.running = False
         
         # Yanıt şablonlarını yükle
         with open('data/responses.json', 'r', encoding='utf-8') as f:
@@ -61,6 +64,13 @@ class ReplyService(BaseService):
             'total_replies': 0,
             'last_reply': None
         }
+        
+        # Telegram istemcisi için event handler'ları
+        self.handlers = []
+        
+        # Durum değişkenleri
+        self.is_running = False
+        self.is_paused = False
         
     def set_services(self, services: Dict[str, Any]) -> None:
         """
@@ -357,6 +367,7 @@ class ReplyService(BaseService):
         if not self.initialized:
             await self.initialize()
             
+        self.running = True
         self.is_running = True
         self.start_time = datetime.now()
         logger.info(f"{self.service_name} servisi başlatıldı.")
@@ -370,6 +381,7 @@ class ReplyService(BaseService):
             None
         """
         # Önce durum değişkenini güncelle
+        self.running = False
         self.is_running = False
         
         # Durdurma sinyalini ayarla (varsa)

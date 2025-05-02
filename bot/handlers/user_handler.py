@@ -53,8 +53,13 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional, Dict, Any, List, Tuple, Union, Callable, TypeVar, cast
 from colorama import Fore, Style
-
 from telethon import errors
+from telethon.tl.types import User, Message, Channel
+from telethon.errors import (
+    RPCError, FloodWaitError, UserPrivacyRestrictedError,
+    ChatAdminRequiredError, UserAlreadyParticipantError,
+    PhoneNumberBannedError, UserBannedInChannelError
+)
 
 # Opsiyonel harici metrik sistemi bağımlılıkları
 try:
@@ -443,7 +448,7 @@ class UserHandler:
     # =========================================================================
     
     def retry_decorator(self, max_retries: int = 3, 
-                       retry_on: Tuple[Exception, ...] = (errors.FloodWaitError,),
+                       retry_on: Tuple[Exception, ...] = (FloodWaitError, RPCError),
                        base_delay: float = 1.0, 
                        backoff_factor: float = 2.0):
         """
@@ -491,7 +496,7 @@ class UserHandler:
                         last_exception = e
                         
                         # FloodWaitError için özel işlem
-                        if isinstance(e, errors.FloodWaitError):
+                        if isinstance(e, FloodWaitError):
                             logger.info(f"FloodWaitError yakalandı, {e.seconds}s bekleniyor ({attempt+1}/{max_retries+1})...")
                             
                             # Prometheus metriği (eğer varsa)
@@ -1022,7 +1027,7 @@ class UserHandler:
                     # Yeniden deneme dekoratörü ile mesaj gönderme
                     retry_send = self.retry_decorator(
                         max_retries=2, 
-                        retry_on=(errors.FloodWaitError, errors.RPCError)
+                        retry_on=(FloodWaitError, RPCError)
                     )(self._send_personal_message)
                     
                     # Mesajı gönder

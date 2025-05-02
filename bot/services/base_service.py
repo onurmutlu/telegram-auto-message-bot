@@ -35,6 +35,7 @@ class BaseService(ABC):
         initialized: Servisin başlatılıp başlatılmadığını belirtir
         services: Diğer servislerin referansları
         _is_running: Servisin çalışıp çalışmadığını belirtir
+        start_time: Servisin başlatıldığı zaman
     """
     
     def __init__(self, service_name=None, client=None, config=None, db=None, stop_event=None):
@@ -59,6 +60,7 @@ class BaseService(ABC):
         self.initialized = False
         self.services = {}
         self._is_running = False
+        self.start_time = None  # Servisin başlatıldığı zaman
         
     @abstractmethod
     async def initialize(self) -> bool:
@@ -84,6 +86,7 @@ class BaseService(ABC):
             
         logger.info(f"{self.name} servisi başlatılıyor...")
         self._is_running = True
+        self.start_time = datetime.now()  # Start time'ı ayarla
         logger.info(f"{self.name} servisi başlatıldı.")
         return True
         

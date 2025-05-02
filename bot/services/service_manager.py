@@ -67,7 +67,7 @@ class ServiceManager:
         
         # Kritik servisler (mutlaka çalışması gerekenler)
         self.critical_services = [
-            "user", "group", "dm", "invite", "promo", "announcement"
+            "user", "group", "message", "reply", "dm", "invite", "promo", "announcement"
         ]
         
         # Bağımlılıkları tanımla
@@ -88,7 +88,7 @@ class ServiceManager:
             'dm': {'user'},             # DMService, UserService'e bağımlıdır
             'invite': {'dm'},           # InviteService, DMService'e bağımlıdır
             'promo': {'dm', 'user'},    # PromoService, DMService ve UserService'e bağımlıdır
-            'datamining': {'user'},     # DataMiningService, UserService'e bağımlıdır
+            'datamining': {'user', 'group'},  # DataMiningService, UserService ve GroupService'e bağımlıdır
             'message': {'group'},       # MessageService, GroupService'e bağımlıdır
             'gpt': set(),               # GptService bağımsız çalışabilir
             'announcement': {'group'}   # AnnouncementService, GroupService'e bağımlıdır
@@ -191,7 +191,10 @@ class ServiceManager:
             # Her servisin set_services metodu varsa, diğer servislere erişmesini sağla
             for name, service in self.services.items():
                 if hasattr(service, 'set_services'):
-                    service.set_services(self.services)
+                    if asyncio.iscoroutinefunction(service.set_services):
+                        await service.set_services(self.services)
+                    else:
+                        service.set_services(self.services)
                     logger.debug(f"{name} servisi diğer servislere bağlandı")
             
             # User servisi özel entegrasyonları
@@ -217,8 +220,14 @@ class ServiceManager:
                     logger.debug("Group servisi Message servisine bağlandı")
             
             # DataMining servisi için özel entegrasyon
-            if 'datamining' in self.services:
+            if 'datamining' in self.services and 'group' in self.services:
                 datamining_service = self.services['datamining']
+                group_service = self.services['group']
+                
+                # DataMining servisine grup servisini özel olarak ayarla
+                if hasattr(datamining_service, 'group_service'):
+                    datamining_service.group_service = group_service
+                    logger.debug("DataMining servisine Group servisi doğrudan atandı")
                 
                 # Eğer fonksiyon varsa grup ve kullanıcı verilerini toplamayı başlat
                 if hasattr(datamining_service, 'start_data_collection_task'):
@@ -247,7 +256,23 @@ class ServiceManager:
             None
         """
         # Başlatma sırasını belirle (bağımlılıklara göre)
-        start_order = ["user", "group", "reply", "gpt", "dm", "invite", "promo", "datamining", "message", "announcement"]
+        start_order = self._determine_start_order()
+        
+        if not start_order:
+            # Varsayılan sıra (kullanıcı tarafından belirtilen önceliğe göre)
+            start_order = [
+                "group",        # Grup servisi en önce başlamalı
+                "user",         # Kullanıcı servisi ikinci öncelikli
+                "message",      # Mesaj servisi üçüncü öncelikli
+                "reply",        # Cevap servisi dördüncü öncelikli
+                "dm",           # DM servisi beşinci öncelikli
+                "gpt",          # Diğer servisler
+                "invite", 
+                "promo", 
+                "datamining",   # DataMining servisi GroupService'den sonra başlamalı
+                "announcement"
+            ]
+        
         logger.info(f"Servisler başlatılıyor. Sıra: {', '.join(start_order)}")
         
         # Servisleri başlat
@@ -373,50 +398,66 @@ class ServiceManager:
             
         return result
         
-    async def stop_services(self) -> None:
+    async def stop_services(self):
         """
-        Tüm servisleri güvenli bir şekilde durdurur.
+        Tüm servisleri durdurur
         
         Returns:
             None
         """
-        # Önce watchdog'u durdur
-        await self.stop_watchdog()
+        logger.info("Tüm servisler durduruluyor...")
         
-        # Durdurma sırasını belirle (başlatma sırasının tersi)
-        stop_order = self._determine_start_order()
-        stop_order.reverse()  # Tersten
+        # Durdurma sinyalini tetikle - tüm servislere iletilecek
+        if self.stop_event:
+            self.stop_event.set()
+            logger.info("Durdurma sinyali gönderildi")
         
-        logger.info(f"Servisler durduruluyor. Sıra: {', '.join(stop_order)}")
+        # Servislerin durmasını bekle - sıralı şekilde
+        # Önce kritik olmayan servisleri durdur
+        non_critical_services = [svc for svc in self.services.keys() if svc not in self.critical_services]
         
-        # Servisleri durdur
-        for name in stop_order:
-            if name in self.services:
-                service = self.services[name]
+        if non_critical_services:
+            logger.info(f"Kritik olmayan servisler durduruluyor: {', '.join(non_critical_services)}")
+            for service_name in non_critical_services:
+                service = self.services.get(service_name)
+                if service:
+                    try:
+                        await service.stop()
+                        logger.info(f"{service_name} servisi durduruldu")
+                    except Exception as e:
+                        logger.error(f"{service_name} servisi durdurulurken hata: {str(e)}")
+        
+        # Ardından kritik servisleri durdur - ters sırada (kritik sırada başlatıldılar)
+        critical_services_reverse = list(reversed(self.critical_services))
+        
+        if critical_services_reverse:
+            logger.info(f"Kritik servisler durduruluyor: {', '.join(critical_services_reverse)}")
+            for service_name in critical_services_reverse:
+                if service_name in self.services:
+                    service = self.services[service_name]
+                    try:
+                        await service.stop()
+                        logger.info(f"{service_name} servisi durduruldu")
+                    except Exception as e:
+                        logger.error(f"{service_name} servisi durdurulurken hata: {str(e)}")
+        
+        # Tüm servisler durduruldu
+        logger.info("Tüm servisler durduruldu")
+        
+        # Tüm görevleri iptal et
+        for task in self.tasks:
+            if not task.done() and not task.cancelled():
+                task.cancel()
                 try:
-                    logger.info(f"Servis durduruluyor: {name}")
-                    await service.stop()
-                    logger.info(f"Servis durduruldu: {name}")
+                    await task
+                except asyncio.CancelledError:
+                    pass
                 except Exception as e:
-                    logger.error(f"Servis durdurma hatası ({name}): {str(e)}")
-                    
-        # Görevleri iptal et ve bekle
-        if self.tasks:
-            for task in self.tasks:
-                if not task.done() and not task.cancelled():
-                    task.cancel()
-            
-            # İptal edilen görevlerin tamamlanmasını bekle
-            try:
-                await asyncio.wait(self.tasks, timeout=5.0)
-            except asyncio.TimeoutError:
-                logger.warning("Bazı servis görevleri 5 saniye içinde sonlanmadı")
-            except Exception as e:
-                logger.error(f"Servis görevleri beklenirken hata: {str(e)}")
-            
-            # Task listesini temizle
-            self.tasks.clear()
-            
+                    logger.error(f"Görev iptal edilirken hata: {str(e)}")
+        
+        self.tasks.clear()
+        logger.info("Tüm servis görevleri iptal edildi")
+        
     async def get_status(self) -> Dict[str, Dict[str, Any]]:
         """
         Tüm servislerin durumunu getirir.
@@ -607,16 +648,27 @@ class ServiceManager:
         
     def has_service(self, service_name: str) -> bool:
         """
-        İsmi belirtilen servisin mevcut olup olmadığını kontrol eder.
+        Belirtilen servisin yüklü olup olmadığını kontrol eder.
         
         Args:
-            service_name: Servis adı
+            service_name: Kontrol edilecek servis adı
             
         Returns:
             bool: Servis mevcutsa True
         """
         return service_name in self.services
-
+        
+    async def stop(self) -> None:
+        """
+        Tüm servisleri durdurur. (Ana kapatma metodu için)
+        
+        Returns:
+            None
+        """
+        logger.info("ServiceManager durduruluyor...")
+        await self.stop_services()
+        logger.info("ServiceManager durduruldu.")
+        
     async def start_watchdog(self):
         """
         Servis watchdog'u başlatır. Watchdog, servislerin düzgün çalışıp çalışmadığını

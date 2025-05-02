@@ -14,6 +14,7 @@ import logging
 import os
 import signal
 import sys
+import platform  # platform modülünü import edelim
 from datetime import datetime
 import shutil
 import subprocess
@@ -21,11 +22,20 @@ from dotenv import load_dotenv
 # SQLite kütüphanesini kaldırdık
 import psycopg2
 from urllib.parse import urlparse
+import time
+import glob
 
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from logging.handlers import RotatingFileHandler  # Eklendi
-from telethon.errors import SessionPasswordNeededError, UnauthorizedError
+from telethon.errors import SessionPasswordNeededError, UnauthorizedError, FloodWaitError
+from telethon.errors import (
+    SessionPasswordNeededError, 
+    UnauthorizedError, 
+    FloodWaitError, 
+    PhoneCodeInvalidError, 
+    RPCError
+)
 from telethon.tl.functions.channels import JoinChannelRequest
 
 from config import Config
@@ -250,19 +260,35 @@ def add_signal_handlers(stop_event):
     Args:
         stop_event (asyncio.Event): Durdurma sinyali için Event nesnesi
     """
-    def shutdown_handler():
-        logger.info("Kapatma sinyali alındı. Servisleri durdurma...")
-        stop_event.set()
+    try:
+        def shutdown_handler():
+            logger.info("Kapatma sinyali alındı. Servisleri durdurma...")
+            stop_event.set()
+            
+            # Ana döngüye shutdown görevi ekle
+            if 'service_manager' in globals():
+                asyncio.create_task(_graceful_shutdown(service_manager, stop_event))
         
-        # Ana döngüye shutdown görevi ekle
-        if 'service_manager' in globals():
-            asyncio.create_task(_graceful_shutdown(service_manager, stop_event))
+        # Çalışan platform kontrolü
+        if platform.system().lower() != 'windows':
+            # Windows dışı platformlar için sinyal işleyicileri ayarla (Unix, Linux, macOS)
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, shutdown_handler)
+                
+            logger.info("Sinyal işleyicileri ayarlandı (Unix/Linux/macOS)")
+        else:
+            # Windows için sinyal işleyicileri
+            # Windows'ta asyncio.add_signal_handler çalışmadığı için signal.signal kullanıyoruz
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                signal.signal(sig, lambda s, f: shutdown_handler())
+                
+            logger.info("Sinyal işleyicileri ayarlandı (Windows)")
     
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, shutdown_handler)
-    
-    logger.info("Sinyal işleyicileri ayarlandı")
+    except Exception as e:
+        logger.warning(f"Sinyal işleyicileri kaydedilemedi: {str(e)}")
+        logger.info("Bot manuel olarak durdurulacak (Ctrl+C/Ctrl+Break kullanabilirsiniz)")
+        # Hata olsa bile devam et
 
 async def _graceful_shutdown(service_manager, stop_event):
     """
@@ -299,9 +325,6 @@ async def _graceful_shutdown(service_manager, stop_event):
 
 def clean_session_locks():
     """Tüm oturum kilit dosyalarını temizler."""
-    import glob
-    import os
-
     try:
         # Session dizininin varlığını kontrol et
         if not os.path.exists(session_dir):
@@ -538,51 +561,74 @@ async def get_or_create_session_string(db):
 
 async def setup_telegram_client(db):
     """
-    Telegram istemcisini yapılandırır ve başlatır.
+    Telegram istemcisini hazırlar ve bağlantıyı sağlar
     
     Args:
-        db (Database): Kullanılacak veritabanı nesnesi
-    
+        db: Veritabanı bağlantısı
+        
     Returns:
-        TelegramClient: Yapılandırılmış ve bağlanmış Telegram istemcisi
+        Telegram istemcisi
     """
     try:
-        # API kimlik bilgilerini kontrol et
-        api_id = os.getenv('API_ID')
+        # Telegram API anahtarları
+        api_id = int(os.getenv('API_ID'))
         api_hash = os.getenv('API_HASH')
+        bot_token = os.getenv('BOT_TOKEN')
         
+        # API bilgilerini kontrol et
         if not api_id or not api_hash:
-            logger.error("API_ID veya API_HASH çevre değişkenleri tanımlanmamış!")
-            raise ValueError("API kimlik bilgileri eksik")
+            logger.error("Telegram API bilgileri eksik. API_ID ve API_HASH çevre değişkenleri gereklidir.")
+            raise ValueError("Telegram API bilgileri eksik")
         
-        api_id = int(api_id)
+        # Session dosyası adı
+        session_name = os.getenv('SESSION_NAME', 'telegram_bot')
+        session_file = os.path.join('session', session_name)
         
-        # Session dizinini kontrol et ve oluştur
-        os.makedirs(session_dir, exist_ok=True)
+        # Eski session dosyalarını kontrol et - FloodWaitError durumunda
+        flood_backup_files = glob.glob(os.path.join('session', f"{session_name}_*_flood.session"))
+        if flood_backup_files:
+            # En yeni flood backup dosyasını bul
+            newest_backup = max(flood_backup_files, key=os.path.getctime)
+            logger.info(f"FloodWaitError sonrası yedek session dosyası bulundu: {newest_backup}")
+            
+            # Mevcut session dosyası var mı?
+            if os.path.exists(f"{session_file}.session"):
+                # Eski session dosyasını yedekle
+                backup_time = time.strftime("%Y%m%d_%H%M%S")
+                os.rename(f"{session_file}.session", f"{session_file}_{backup_time}.session.bak")
+                logger.info(f"Mevcut session dosyası yedeklendi: {session_file}_{backup_time}.session.bak")
+            
+            # Flood backup dosyasını kullan
+            os.rename(newest_backup, f"{session_file}.session")
+            logger.info(f"FloodWaitError sonrası yedek session dosyası aktif edildi: {session_file}.session")
         
-        # Session dosyasının varlığını kontrol et - varsa disk tabanlı, yoksa StringSession kullan
-        session_file = os.path.join(session_dir, "anon")
-        use_string_session = not os.path.exists(session_file)
+        # Disk tabanlı oturum kullan
+        client = TelegramClient(
+            session_file,
+            api_id, 
+            api_hash,
+            device_model="Telegram Bot",
+            system_version="Python Telethon",
+            app_version="1.0",
+            flood_sleep_threshold=60,
+            retry_delay=5,
+            auto_reconnect=True
+        )
         
-        if use_string_session:
-            try:
-                # Session string'i veritabanından almayı dene
-                session_string = None
+        logger.info("Telegram istemcisi oluşturuldu, bağlanılıyor...")
+        await client.connect()
+        
+        # Kullanıcı yetkilendirmesini kontrol et
+        if not await client.is_user_authorized():
+            logger.warning("İstemci yetkili değil, oturum açmayı deniyoruz...")
+            
+            # Oturum açma denemelerine başla
+            auth_attempts = 0
+            max_auth_attempts = 3
+            flood_wait_triggered = False
+            
+            while auth_attempts < max_auth_attempts and not flood_wait_triggered:
                 try:
-                    # Her sorgu için yeni bir cursor oluştur
-                    query = "SELECT value FROM settings WHERE key = 'session_string'"
-                    result = await db.fetchone(query)
-                    
-                    if result and result[0]:
-                        session_string = result[0]
-                        logger.info("Session string veritabanından alındı.")
-                except Exception as db_error:
-                    logger.error(f"Session string alınırken veritabanı hatası: {str(db_error)}")
-                
-                if not session_string:
-                    # Session string yoksa yeni oturum oluştur
-                    logger.info("Session string bulunamadı, yeni oluşturuluyor...")
-                    
                     # Telefon numarasını .env'den almayı dene
                     phone = os.getenv('PHONE')
                     
@@ -593,160 +639,73 @@ async def setup_telegram_client(db):
                     else:
                         logger.info(f"Telefon numarası .env dosyasından alındı: {phone}")
                     
-                    client = TelegramClient(
-                        StringSession(), 
-                        api_id, 
-                        api_hash,
-                        device_model="Telegram Bot",
-                        system_version="Python Telethon",
-                        app_version="1.0"
-                    )
-                    
-                    await client.connect()
-                    await client.send_code_request(phone)
-                    code = input("Doğrulama kodunu girin: ")
-                    
                     try:
-                        await client.sign_in(phone, code)
-                        logger.info("Giriş başarılı! Oturum bilgileri kaydedildi.")
-                    except SessionPasswordNeededError:
-                        password = input("İki faktörlü doğrulama şifrenizi girin: ")
-                        await client.sign_in(password=password)
-                        logger.info("Giriş başarılı! Oturum bilgileri kaydedildi.")
-                    
-                    # Session string'i al ve kaydet
-                    session_string = client.session.save()
-                    
-                    # Veritabanına kaydet
-                    try:
-                        query = "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
-                        await db.execute(query, ("session_string", session_string))
-                        logger.info("Yeni session string veritabanına kaydedildi.")
-                        logger.info("Bundan sonraki oturumlarda tekrar giriş yapmanız gerekmeyecek.")
-                    except Exception as insert_error:
-                        logger.error(f"Session string kaydedilirken hata: {str(insert_error)}")
-                    
-                    return client
-                
-                # Telethon istemcisini oluştur - StringSession kullanarak
-                client = TelegramClient(
-                    StringSession(session_string),
-                    api_id, 
-                    api_hash,
-                    device_model="Telegram Bot",
-                    system_version="Python Telethon",
-                    app_version="1.0",
-                    flood_sleep_threshold=60,
-                    retry_delay=5,
-                    auto_reconnect=True          
-                )
-                
-                logger.info("StringSession tabanlı istemci oluşturuldu, bağlanılıyor...")
-                await client.connect()
-                
-                # Kullanıcı yetkilendirmesini kontrol et
-                if not await client.is_user_authorized():
-                    logger.error("StringSession ile yetkilendirme başarısız, alternatif yöntemler deneniyor...")
-                    raise Exception("StringSession yetkilendirme hatası")
-                
-                me = await client.get_me()
-                if me:
-                    logger.info(f"StringSession istemcisi bağlandı, kullanıcı: {me.first_name} (@{me.username})")
-                    return client
-                else:
-                    logger.warning("Kullanıcı bilgisi alınamadı, alternatif yöntem deneniyor...")
-                    raise Exception("Kullanıcı bilgisi alınamadı")
-                
-            except Exception as e:
-                logger.error(f"StringSession ile bağlantı hatası: {str(e)}")
-                logger.info("Disk tabanlı oturum deneniyor...")
-                use_string_session = False
-        
-        # Disk tabanlı oturum kullan (StringSession başarısız olduysa ya da dosya zaten varsa)
-        if not use_string_session:
-            # Disk tabanlı oturum dene
-            client = TelegramClient(
-                session_file,
-                api_id, 
-                api_hash,
-                device_model="Telegram Bot",
-                system_version="Python Telethon",
-                app_version="1.0",
-                flood_sleep_threshold=60,
-                retry_delay=5,
-                auto_reconnect=True
-            )
-            
-            logger.info("Disk tabanlı istemci oluşturuldu, bağlanılıyor...")
-            await client.connect()
-            
-            # Kullanıcı yetkilendirmesini kontrol et
-            if not await client.is_user_authorized():
-                logger.error("İstemci yetkili değil, manuel oturum açmayı deneyeceğiz.")
-                
-                # Telefon numarasını .env'den almayı dene
-                phone = os.getenv('PHONE')
-                
-                if not phone:
-                    # Eğer .env'de telefon numarası yoksa kullanıcıdan iste
-                    logger.warning("PHONE çevre değişkeni bulunamadı, manuel giriş gerekiyor.")
-                    phone = input("Telefon numaranızı girin (+905xxxxxxxxx): ")
-                else:
-                    logger.info(f"Telefon numarası .env dosyasından alındı: {phone}")
-                
-                try:
-                    await client.send_code_request(phone)
-                    logger.info(f"Doğrulama kodu gönderildi: {phone}")
-                    code = input("Doğrulama kodunu girin: ")
-                    
-                    try:
-                        await client.sign_in(phone, code)
-                        logger.info("Giriş başarılı! Oturum bilgileri kaydedildi.")
-                    except SessionPasswordNeededError:
-                        password = input("İki faktörlü doğrulama şifrenizi girin: ")
-                        await client.sign_in(password=password)
-                        logger.info("Giriş başarılı! Oturum bilgileri kaydedildi.")
+                        # Doğrulama kodu gönderilmesini iste
+                        await client.send_code_request(phone)
+                        logger.info(f"Doğrulama kodu gönderildi: {phone}")
                         
-                    # Yetkilendirmeyi kontrol et
-                    if await client.is_user_authorized():
-                        me = await client.get_me()
-                        if me:
-                            logger.info(f"Manuel oturum açma başarılı: {me.first_name} (@{me.username})")
-                            logger.info("Bundan sonraki oturumlarda tekrar giriş yapmanız gerekmeyecek.")
+                        # Kullanıcıdan doğrulama kodunu iste
+                        code = input("Doğrulama kodunu girin: ")
+                        
+                        try:
+                            # Giriş yap
+                            await client.sign_in(phone, code)
+                            logger.info("Giriş başarılı! Oturum bilgileri kaydedildi.")
+                            break  # Başarılı giriş, döngüden çık
                             
-                            # Session string'i kaydet
-                            session_string = client.session.save()
-                            try:
-                                query = "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
-                                await db.execute(query, ("session_string", session_string))
-                                logger.info("Session string başarıyla kaydedildi")
-                            except Exception as db_error:
-                                logger.error(f"Session string kaydedilirken veritabanı hatası: {str(db_error)}")
-                            return client
-                        else:
-                            logger.error("Kullanıcı bilgisi alınamadı")
-                            raise ValueError("Kullanıcı bilgisi alınamadı")
+                        except SessionPasswordNeededError:
+                            # İki faktörlü doğrulama gerekli
+                            password = input("İki faktörlü doğrulama şifrenizi girin: ")
+                            await client.sign_in(password=password)
+                            logger.info("İki faktörlü doğrulama başarılı! Oturum bilgileri kaydedildi.")
+                            break  # Başarılı giriş, döngüden çık
+                            
+                    except FloodWaitError as e:
+                        # Flood wait hatası - bekle
+                        wait_time = e.seconds
+                        logger.error(f"Rate limit aşıldı. {wait_time} saniye beklemeniz gerekiyor.")
+                        
+                        # İnsan tarafından okunabilir zaman formatı
+                        hours = wait_time // 3600
+                        minutes = (wait_time % 3600) // 60
+                        seconds = wait_time % 60
+                        human_time = f"{hours} saat, {minutes} dakika, {seconds} saniye"
+                        
+                        logger.warning(f"Bu, yaklaşık {human_time} beklemek demektir.")
+                        logger.warning("Daha sonra tekrar deneyiniz veya alternatif bir hesap kullanınız.")
+                        
+                        # Session dosyasını yedekle (flood durumu için)
+                        if os.path.exists(f"{session_file}.session"):
+                            backup_time = time.strftime("%Y%m%d_%H%M%S")
+                            flood_backup = f"{session_file}_{backup_time}_flood.session"
+                            os.rename(f"{session_file}.session", flood_backup)
+                            logger.info(f"Session dosyası FloodWaitError nedeniyle yedeklendi: {flood_backup}")
+                        
+                        flood_wait_triggered = True
+                        raise ValueError(f"Telegram API kısıtlaması: {human_time} boyunca beklemeniz gerekiyor.")
+                        
                 except Exception as auth_error:
-                    logger.error(f"Manuel oturum açma hatası: {str(auth_error)}")
-                    raise ValueError("Oturum açma başarısız")
-            else:
-                me = await client.get_me()
-                if me:
-                    logger.info(f"Disk tabanlı istemci bağlandı, kullanıcı: {me.first_name} (@{me.username})")
+                    # Diğer hatalar
+                    logger.error(f"Oturum açma hatası: {str(auth_error)}")
+                    auth_attempts += 1
                     
-                    # Başarıyla bağlandıysa, string session'ı kaydet
-                    try:
-                        session_string = client.session.save()
-                        query = "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
-                        await db.execute(query, ("session_string", session_string))
-                        logger.info("Session string başarıyla kaydedildi")
-                    except Exception as e2:
-                        logger.error(f"Session string kaydedilirken hata: {str(e2)}")
+                    if auth_attempts >= max_auth_attempts:
+                        logger.error(f"Maksimum oturum açma denemesi ({max_auth_attempts}) aşıldı.")
+                        raise ValueError("Oturum açma başarısız oldu. Lütfen daha sonra tekrar deneyin.")
                     
-                    return client
-                else:
-                    logger.warning("Kullanıcı bilgisi alınamadı, ancak istemci yetkili görünüyor")
-                    return client
+                    # Bir sonraki denemeden önce bekle
+                    wait_time = 5 * auth_attempts  # Her denemede daha uzun bekle
+                    logger.info(f"Yeniden deneme öncesi {wait_time} saniye bekleniyor...")
+                    await asyncio.sleep(wait_time)
+        
+        # Bu noktada kullanıcı oturumu açılmıştır, kullanıcı bilgilerini al
+        me = await client.get_me()
+        if me:
+            logger.info(f"Bağlı kullanıcı: {me.first_name} (@{me.username})")
+        else:
+            logger.warning("Kullanıcı bilgisi alınamadı, ancak oturum açma başarılı!")
+        
+        return client
     
     except Exception as e:
         logger.error(f"Telegram istemcisi kurulurken hata: {str(e)}")
@@ -756,6 +715,9 @@ async def setup_telegram_client(db):
 
 async def main():
     """Ana uygulama başlangıç noktası"""
+    client = None  # İleri kullanım için None olarak tanımla
+    db = None
+    
     try:
         # Banner'ı göster
         print_banner()
@@ -793,6 +755,15 @@ async def main():
             print(f"❌ Celery beat başlatma hatası: {str(e)}")
         
         load_dotenv()
+        
+        # .env dosyasındaki API anahtarlarını kontrol et
+        api_id = os.getenv('API_ID')
+        api_hash = os.getenv('API_HASH')
+        
+        if not api_id or not api_hash:
+            logger.critical("API_ID ve API_HASH çevre değişkenleri ayarlanmamış. .env dosyasını kontrol edin.")
+            print("❌ Kritik Hata: API_ID ve API_HASH ayarlanmamış. Program durduruluyor.")
+            return
         
         # Gerekli dizinleri kontrol et ve oluştur
         directories = [
@@ -847,32 +818,64 @@ async def main():
                 client = await setup_telegram_client(db)
                 
                 # Kullanıcı bilgilerini al
-                me = await client.get_me()
-                if me:
-                    logger.info(f"Bağlı kullanıcı: {me.first_name} (@{me.username})")
-                else:
-                    logger.warning("Kullanıcı bilgisi alınamadı! Yetkilendirme sorunları olabilir.")
-                    
+                user_info_success = False
+                
+                try:
+                    me = await client.get_me()
+                    if me:
+                        logger.info(f"Bağlı kullanıcı: {me.first_name} (@{me.username})")
+                        user_info_success = True
+                    else:
+                        logger.warning("Kullanıcı bilgisi alınamadı! Yetkilendirme sorunları olabilir.")
+                except Exception as me_error:
+                    logger.error(f"Kullanıcı bilgisi alınamadı: {str(me_error)}")
+                
+                # Eğer kullanıcı bilgisi alınamadıysa ve phone ayarı varsa yeniden login dene
+                if not user_info_success:
                     # Yeniden oturum açmayı dene
                     phone = os.getenv('PHONE')
                     if phone:
                         try:
                             logger.info(f"Yeniden oturum açmayı deniyorum: {phone}")
-                            await client.send_code_request(phone)
-                            code = input("Doğrulama kodunu girin: ")
                             
                             try:
-                                await client.sign_in(phone, code)
-                            except SessionPasswordNeededError:
-                                password = input("İki faktörlü doğrulama şifrenizi girin: ")
-                                await client.sign_in(password=password)
+                                await client.send_code_request(phone)
+                                code = input("Doğrulama kodunu girin: ")
                                 
-                            me = await client.get_me()
-                            if me:
-                                logger.info(f"Yeniden oturum açma başarılı: {me.first_name} (@{me.username})")
-                            else:
-                                logger.error("Yeniden oturum açma başarısız oldu, kullanıcı bilgisi alınamadı")
-                                raise ValueError("Geçerli bir kullanıcı oturumu gerekli")
+                                try:
+                                    await client.sign_in(phone, code)
+                                except SessionPasswordNeededError:
+                                    password = input("İki faktörlü doğrulama şifrenizi girin: ")
+                                    await client.sign_in(password=password)
+                                    
+                                me = await client.get_me()
+                                if me:
+                                    logger.info(f"Yeniden oturum açma başarılı: {me.first_name} (@{me.username})")
+                                    user_info_success = True
+                                else:
+                                    logger.error("Yeniden oturum açma başarısız oldu, kullanıcı bilgisi alınamadı")
+                                    raise ValueError("Geçerli bir kullanıcı oturumu gerekli")
+                            except FloodWaitError as e:
+                                wait_time = e.seconds
+                                hours = wait_time // 3600
+                                minutes = (wait_time % 3600) // 60
+                                seconds = wait_time % 60
+                                logger.error(f"Flood Wait hatası: {hours} saat, {minutes} dakika, {seconds} saniye beklemek gerekiyor.")
+                                
+                                # Oturum dosyasını işaretle (bir sonraki seferde hatırlansın)
+                                session_name = os.getenv('SESSION_NAME', 'telegram_bot')
+                                session_file = os.path.join('session', session_name)
+                                
+                                if os.path.exists(f"{session_file}.session"):
+                                    backup_time = time.strftime("%Y%m%d_%H%M%S")
+                                    flood_backup = f"{session_file}_{backup_time}_flood.session"
+                                    try:
+                                        os.rename(f"{session_file}.session", flood_backup)
+                                        logger.info(f"Session dosyası FloodWaitError nedeniyle yedeklendi: {flood_backup}")
+                                    except Exception as rename_error:
+                                        logger.error(f"Session dosyası yedeklenirken hata: {str(rename_error)}")
+                                
+                                raise ValueError(f"Flood Wait hatası: {hours} saat, {minutes} dakika, {seconds} saniye beklemek gerekiyor.")
                         except Exception as auth_error:
                             logger.error(f"Yeniden oturum açma hatası: {str(auth_error)}")
                             raise ValueError("Bot çalışması için geçerli bir kullanıcı oturumu gerekli")
@@ -881,7 +884,10 @@ async def main():
                 stop_event = asyncio.Event()
                 
                 # Sinyal işleyicileri ekle
-                add_signal_handlers(stop_event)
+                try:
+                    add_signal_handlers(stop_event)
+                except Exception as signal_error:
+                    logger.warning(f"Sinyal işleyicileri kaydedilemedi: {str(signal_error)}")
                 
                 # ServiceFactory ve ServiceManager kullanarak servisleri yönet
                 service_factory = ServiceFactory(client, config, db, stop_event)
@@ -902,8 +908,6 @@ async def main():
                     "announcement",  # AnnouncementService
                     "datamining",    # DataMiningService
                     "message",       # MessageService
-                    "analytics",     # AnalyticsService
-                    "error"          # ErrorService
                 ]
                 
                 # Servisleri oluştur ve kaydet
@@ -938,28 +942,36 @@ async def main():
             logger.critical(f"Kritik hata: {e}")
             import traceback
             logger.critical(traceback.format_exc())
-        finally:
-            # Veritabanı bağlantısını kapat
-            if 'db' in locals():
-                try:
-                    await db.disconnect()
-                    logger.info("Veritabanı bağlantısı kapatıldı.")
-                except Exception as e:
-                    logger.error(f"Veritabanı bağlantısı kapatılırken hata: {str(e)}")
-            
-            # İstemciyi kapat
-            if 'client' in locals():
-                try:
-                    await client.disconnect()
-                    logger.info("Telegram istemcisi kapatıldı.")
-                except Exception as e:
-                    logger.error(f"Telegram istemcisi kapatılırken hata: {str(e)}")
-    
     except Exception as e:
         print(f"❌ Ana uygulama hatası: {str(e)}")
         logging.error(f"Ana uygulama hatası: {str(e)}")
         sys.exit(1)
     finally:
+        # Veritabanı bağlantısını kapat
+        if db is not None:
+            try:
+                await db.disconnect()
+                logger.info("Veritabanı bağlantısı kapatıldı.")
+            except Exception as e:
+                logger.error(f"Veritabanı bağlantısı kapatılırken hata: {str(e)}")
+        
+        # İstemciyi kapat
+        if client is not None:
+            try:
+                try:
+                    # client.connected özelliğini kontrol et
+                    if hasattr(client, 'connected') and client.connected:
+                        await client.disconnect()
+                        logger.info("Telegram istemcisi kapatıldı.")
+                    else:
+                        logger.info("Telegram istemcisi zaten kapalı.")
+                except AttributeError:
+                    # client.connected özelliği yoksa genel durdurma denemesi yap
+                    await client.disconnect()
+                    logger.info("Telegram istemcisi kapatıldı (genel durdurma).")
+            except Exception as e:
+                logger.error(f"Telegram istemcisi kapatılırken hata: {str(e)}")
+        
         # Celery worker ve beat'i temizle
         try:
             if 'celery_worker' in locals():
@@ -1043,6 +1055,41 @@ def backup_database():
         logger.error(f"Veritabanı yedekleme hatası: {str(e)}")
         return False
 
+# Bot kapatma işlevi
+def shutdown_bot():
+    try:
+        logger.info("Bot kapatılıyor...")
+        
+        # ServiceManager'ı durdur
+        if 'service_manager' in globals() and service_manager and hasattr(service_manager, 'stop'):
+            try:
+                asyncio.run(service_manager.stop())
+                logger.info("ServiceManager başarıyla durduruldu")
+            except Exception as e:
+                logger.error(f"Servis durdurma hatası: {str(e)}")
+                
+        # Veritabanı bağlantısını kapat
+        if 'database' in globals() and database and database.connected:
+            try:
+                asyncio.run(database.disconnect())
+                logger.info("PostgreSQL veritabanı bağlantısı kapatıldı.")
+            except Exception as e:
+                logger.error(f"Veritabanı kapatılırken hata: {str(e)}")
+        
+        logger.info("Bot başarıyla kapatıldı.")
+        
+        # Telegram istemcisini kapat
+        if 'client' in globals() and client:
+            try:
+                asyncio.run(client.disconnect())
+                logger.info("Telegram istemcisi kapatılıyor...")
+            except:
+                pass
+    except Exception as e:
+        logger.error(f"Kapatma sırasında hata: {str(e)}")
+        
+    logger.info("Bot kapatıldı.")
+
 if __name__ == "__main__":
     try:
         # Windows için asyncio ayarı
@@ -1056,9 +1103,27 @@ if __name__ == "__main__":
         if os.getenv("DEBUG", "false").lower() == "true":
             loop.set_debug(True)
             
-        # Signal handler kodu kaldırıldı, ana fonksiyona taşındı
-        # Artık burada sinyal işleyicisi eklenmeyecek
-        
+        # Sinyalleri işleyecek fonksiyonlar
+        def signal_handler(signal_num, frame):
+            logger.info(f"Sinyal alındı: {signal_num}. Bot kapatılıyor...")
+            # Event'i set et
+            if stop_event and not stop_event.is_set():
+                stop_event.set()
+            # Ana fonksiyondan çıkmak için
+            if main_task and not main_task.done():
+                main_task.cancel()
+            # Ek temizleme
+            shutdown_bot()
+
+        # Sinyalleri bağla
+        try:
+            if platform.system() != "Windows":
+                signal.signal(signal.SIGINT, signal_handler)
+                signal.signal(signal.SIGTERM, signal_handler)
+                logger.debug("Sinyal işleyicileri kaydedildi")
+        except Exception as e:
+            logger.warning(f"Sinyal işleyicileri kaydedilemedi: {str(e)}")
+
         # Ana fonksiyonu çalıştır
         loop.run_until_complete(main())
         

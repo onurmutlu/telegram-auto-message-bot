@@ -50,8 +50,12 @@ import rich
 import threading
 from typing import List, Dict, Optional, Set, Any, Union, Tuple
 
-from telethon.tl.types import Channel, User, Message
-from telethon.errors import FloodWaitError, ChatAdminRequiredError, ChannelPrivateError
+from telethon.tl.types import Channel, User, Message, Chat, ChatFull, PeerChannel
+from telethon.errors import (
+    RPCError, FloodWaitError, UserPrivacyRestrictedError,
+    ChatAdminRequiredError, UserAlreadyParticipantError,
+    ChannelPrivateError, ChatWriteForbiddenError
+)
 
 from telethon import errors
 from bot.services.group_service import GroupService
@@ -61,6 +65,7 @@ from bot.utils.progress import ProgressManager
 
 import json
 import os
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -555,10 +560,15 @@ class GroupHandler:
                 
             return True
             
-        except errors.FloodWaitError as e:
-            wait_time = e.seconds + random.randint(2, 5)  # Daha az ek bekleme
-            self.logger.warning(f"⚠️ Flood wait hatası: {wait_time}s bekleniyor ({group.title})")
-            asyncio.create_task(self._handle_flood_wait(group, wait_time))
+        except FloodWaitError as e:
+            wait_time = e.seconds
+            self.logger.warning(f"FloodWaitError: {wait_time} saniye bekleniyor...")
+            
+            # Flood wait istatistiğini güncelle
+            self.stats["flood_waits"] += 1
+            
+            # Grubu işaretleyerek bekle
+            await self._handle_flood_wait(group, wait_time)
             return False
             
         except Exception as e:
@@ -1296,53 +1306,164 @@ class GroupHandler:
             bool: Başarılı ise True
         """
         try:
+            if not self.client:
+                self.logger.error("Telegram istemcisi bulunamadı! Client null.")
+                return False
+                
+            if not message or message.strip() == "":
+                self.logger.error(f"Boş mesaj gönderilmeye çalışıldı: Grup {group_id}")
+                return False
+            
             # Önce grup nesnesi al - entity'yi önce hazırla
             try:
-                group_entity = await self.client.get_entity(group_id)
+                self.logger.info(f"Grup entity alınıyor: {group_id}")
+                entity = await self.client.get_entity(int(group_id))
+                group_title = getattr(entity, 'title', f"Grup {group_id}")
+                self.logger.info(f"Grup entity başarıyla alındı: {group_title}")
+            except ValueError as e:
+                self.logger.error(f"Geçersiz grup ID formatı: {group_id}, hata: {str(e)}")
+                self._mark_error_group(entity, "Geçersiz ID formatı")
+                return False
+            except RPCError as e:
+                self.logger.error(f"Grup mesajı gönderilirken RPC hatası: {str(e)}")
+                self._mark_error_group(entity, f"RPC hatası: {str(e)}")
+                return False
             except Exception as e:
                 self.logger.error(f"Grup entity alınamadı: {group_id} - {str(e)}")
+                # Bu hatayı veritabanında işaretle
+                if hasattr(self.db, 'mark_group_error'):
+                    await self._run_async_db_method(
+                        self.db.mark_group_error,
+                        group_id, 
+                        f"Entity hatası: {str(e)}"
+                    )
                 return False
                 
             # Mesajı gönder
-            self.logger.info(f"📨 '{getattr(group_entity, 'title', group_id)}' grubuna mesaj gönderiliyor...")
+            self.logger.info(f"📨 '{group_title}' grubuna mesaj gönderiliyor...")
             
-            await self.client.send_message(
-                group_entity,
-                message,
-                link_preview=False,
-                silent=True,
-                clear_draft=False
-            )
+            # Retry mekanizması
+            max_retries = 3
+            retry_delay = 5  # saniye
             
-            # İstatistikleri güncelle
-            self.sent_count += 1
-            self.total_sent += 1
-            self.processed_groups.add(group_id)
-            self.last_message_time = datetime.now()
-            self.last_sent_time[group_id] = datetime.now()
-            
-            # Veritabanı istatistiklerini güncelle
-            if hasattr(self.db, 'update_group_stats'):
-                group_title = getattr(group_entity, 'title', f"Group {group_id}")
-                asyncio.create_task(self._update_group_stats(group_id, group_title))
+            for retry in range(max_retries):
+                try:
+                    result = await self.client.send_message(
+                        entity,
+                        message,
+                        link_preview=False,
+                        silent=True,
+                        clear_draft=False
+                    )
+                    
+                    if result:
+                        # İstatistikleri güncelle
+                        self.sent_count += 1
+                        self.total_sent += 1
+                        self.processed_groups.add(group_id)
+                        self.last_message_time = datetime.now()
+                        self.last_sent_time[group_id] = datetime.now()
+                        
+                        # Veritabanı istatistiklerini güncelle
+                        if hasattr(self.db, 'update_group_stats'):
+                            asyncio.create_task(self._update_group_stats(group_id, group_title))
+                            
+                        self.logger.info(f"✅ Mesaj gönderildi: {group_title}")
+                        return True
+                    else:
+                        self.logger.warning(f"Mesaj gönderimi belirsiz sonuç döndü: {group_title}")
+                        
+                except errors.FloodWaitError as e:
+                    wait_time = e.seconds
+                    self.logger.warning(f"⚠️ Flood wait hatası: {wait_time}s bekleniyor (Grup {group_title})")
+                    
+                    # Flood bekleme süresini aşan beklemeler için
+                    if wait_time > 120:  # 2 dakikadan fazla bekleme gerekiyorsa
+                        self.logger.error(f"Uzun flood beklemesi: {wait_time}s - Mesaj gönderimi iptal edildi")
+                        # Bu hatayı veritabanında işaretle
+                        if hasattr(self.db, 'mark_group_error'):
+                            await self._run_async_db_method(
+                                self.db.mark_group_error,
+                                group_id, 
+                                f"FloodWait: {wait_time}s"
+                            )
+                        return False
+                    
+                    # 2 dakikadan az bekleme için bekle ve yeniden dene
+                    self.logger.info(f"Flood wait: {wait_time}s bekliyor ve yeniden deneyecek")
+                    await asyncio.sleep(wait_time)
+                    continue
+                    
+                except errors.ChatWriteForbiddenError:
+                    self.logger.error(f"⚠️ Gruba yazma yetkisi yok: {group_title}")
+                    # Bu hatayı veritabanında işaretle
+                    if hasattr(self.db, 'mark_group_error'):
+                        await self._run_async_db_method(
+                            self.db.mark_group_error,
+                            group_id, 
+                            "ChatWriteForbidden: Gruba yazma yetkisi yok"
+                        )
+                    return False
                 
-            self.logger.info(f"✅ Mesaj gönderildi: {getattr(group_entity, 'title', group_id)}")
-            return True
+                except errors.UserBannedInChannelError:
+                    self.logger.error(f"⚠️ Kullanıcı bu kanalda yasaklandı: {group_title}")
+                    if hasattr(self.db, 'mark_group_error'):
+                        await self._run_async_db_method(
+                            self.db.mark_group_error,
+                            group_id, 
+                            "UserBannedInChannel: Kullanıcı bu kanalda yasaklandı"
+                        )
+                    return False
+                
+                except errors.ChatAdminRequiredError:
+                    self.logger.error(f"⚠️ Bu işlem için admin yetkisi gerekiyor: {group_title}")
+                    if hasattr(self.db, 'mark_group_error'):
+                        await self._run_async_db_method(
+                            self.db.mark_group_error,
+                            group_id, 
+                            "ChatAdminRequired: Bu işlem için admin yetkisi gerekiyor"
+                        )
+                    return False
+                
+                except errors.RPCError as e:
+                    self.logger.error(f"⚠️ Telegram API hatası: {str(e)} (Grup {group_title})")
+                    # Yeniden deneme sayısını kontrol et
+                    if retry >= max_retries - 1:
+                        if hasattr(self.db, 'mark_group_error'):
+                            await self._run_async_db_method(
+                                self.db.mark_group_error,
+                                group_id, 
+                                f"Telegram API hatası: {str(e)}"
+                            )
+                        return False
+                    
+                    self.logger.info(f"Yeniden deneniyor ({retry+1}/{max_retries})...")
+                    await asyncio.sleep(retry_delay * (retry + 1))  # Artan bekleme süresi
+                    continue
+                    
+                except Exception as e:
+                    self.logger.error(f"⚠️ Mesaj gönderme hatası: {str(e)} (Grup {group_title})")
+                    self.logger.debug(traceback.format_exc())
+                    
+                    # Son deneme miydi?
+                    if retry >= max_retries - 1:
+                        if hasattr(self.db, 'mark_group_error'):
+                            await self._run_async_db_method(
+                                self.db.mark_group_error,
+                                group_id, 
+                                f"Mesaj gönderme hatası: {str(e)}"
+                            )
+                        return False
+                        
+                    # Yeniden dene
+                    self.logger.info(f"Yeniden deneniyor ({retry+1}/{max_retries})...")
+                    await asyncio.sleep(retry_delay * (retry + 1))
             
-        except errors.FloodWaitError as e:
-            wait_time = e.seconds
-            self.logger.warning(f"⚠️ Flood wait hatası: {wait_time}s bekleniyor (Grup {group_id})")
-            # Flood limiti durumunu bildirmek için event gönder
-            if hasattr(self, 'event_service') and self.event_service:
-                await self.event_service.emit_event(
-                    'flood_wait_error', 
-                    {'group_id': group_id, 'wait_time': wait_time}
-                )
+            # Tüm yeniden denemeler başarısız olduysa
+            self.logger.error(f"Maksimum yeniden deneme sayısına ulaşıldı: {group_title}")
             return False
             
         except Exception as e:
-            self.logger.error(f"⚠️ Grup mesaj hatası: {group_id} - {str(e)}")
-            # Veritabanında işaretle
-            if hasattr(self.db, 'mark_group_error'):
-                self.db.mark_group_error(group_id, str(e))
+            self.logger.error(f"Kritik mesaj gönderme hatası: {str(e)}")
+            self.logger.debug(traceback.format_exc())
             return False

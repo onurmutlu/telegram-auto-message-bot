@@ -19,8 +19,9 @@ import json
 from typing import Dict, Any, List
 from bot.handlers.group_handler import GroupHandler
 from bot.services.base_service import BaseService
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class MessageService(BaseService):
         self.group_handler = GroupHandler(client, config, db)
         
         # Çalışma durumu değişkenleri
+        self.running = False  # Servis durumu için running özelliği
         self.is_running = False
         self.messages_sent = 0
         self.messages_failed = 0
@@ -152,52 +154,341 @@ class MessageService(BaseService):
         if not self.initialized:
             await self.initialize()
             
+        self.running = True  # running özelliğini güncelle
         self.is_running = True
         self.start_time = datetime.now()
         logger.info(f"{self.service_name} servisi başlatıldı.")
         return True
     
-    async def stop(self) -> None:
+    async def run(self) -> None:
         """
-        Servisi güvenli bir şekilde durdurur.
+        Servisin ana çalışma döngüsü. Bu metot otomatik olarak gruplara mesaj gönderme işlemini yönetir.
         
         Returns:
             None
         """
-        # Önce durum değişkenini güncelle
+        logger.info("MessageService çalışma döngüsü başlatıldı")
+        try:
+            # İlk çalıştırmada şablonları yeniden yükle
+            await self.load_message_templates()
+            
+            # Veritabanı bağlantısını kontrol et
+            if not hasattr(self.db, 'connected') or not self.db.connected:
+                logger.error("Veritabanı bağlantısı yok, bağlanmayı deniyorum...")
+                try:
+                    await self.db.connect()
+                except Exception as e:
+                    logger.error(f"Veritabanı bağlantısı kurulamadı: {str(e)}")
+            
+            # GroupHandler'ı initialize et ve başlat
+            if not hasattr(self.group_handler, 'initialized') or not self.group_handler.initialized:
+                await self.group_handler.initialize()
+            
+            # İlk çalıştırmada mesaj planını güncelle
+            self.next_run_time = datetime.now() + timedelta(seconds=20)  # 20 saniye sonra ilk mesajları gönder
+            logger.info(f"İlk mesaj gönderimi planlandı: {self.next_run_time.strftime('%H:%M:%S')}")
+            
+            # Ana döngü
+            while self.running and not self.stop_event.is_set():  # is_running yerine running kullan
+                try:
+                    # Şu anki zamanı kontrol et
+                    now = datetime.now()
+                    if now >= self.next_run_time:
+                        logger.info("Otomatik mesaj gönderme döngüsü başlatılıyor...")
+                        
+                        # Mesaj şablonlarını kontrol et
+                        if not self.message_templates:
+                            logger.warning("Mesaj şablonları eksik, yeniden yükleniyor...")
+                            self._load_message_templates()
+                            
+                            # Şablonlar hala yüklenemezse
+                            if not self.message_templates:
+                                # Varsayılan şablonları ekle
+                                logger.warning("Mesaj şablonları yüklenemedi, varsayılan şablonlar ekleniyor...")
+                                self.message_templates = {
+                                    'default_1': {
+                                        'content': 'Merhaba! Bu otomatik bir mesajdır.',
+                                        'category': 'general',
+                                        'language': 'tr'
+                                    },
+                                    'default_2': {
+                                        'content': 'Nasılsınız? Grup aktivitesi devam ediyor mu?',
+                                        'category': 'general',
+                                        'language': 'tr'
+                                    }
+                                }
+                        
+                        # Aktif grupları al
+                        groups = await self._get_active_groups()
+                        if groups:
+                            logger.info(f"{len(groups)} aktif grup bulundu, mesaj gönderimi başlıyor...")
+                            
+                            # Batch olarak grupları işle
+                            batches = [groups[i:i + self.batch_size] for i in range(0, len(groups), self.batch_size)]
+                            for batch_index, batch in enumerate(batches):
+                                logger.info(f"Batch {batch_index+1}/{len(batches)} işleniyor ({len(batch)} grup)")
+                                
+                                for group in batch:
+                                    group_id = group.get('group_id')
+                                    if not group_id:
+                                        logger.warning(f"Geçersiz grup verisi: {group}")
+                                        continue
+                                        
+                                    try:
+                                        # Grup için uygun bir şablon seç
+                                        message_template = await self._select_message_template(group)
+                                        if message_template:
+                                            # Mesajı gönder
+                                            logger.info(f"Gruba mesaj gönderiliyor: {group_id}")
+                                            await self.send_message(group_id, message_template)
+                                            
+                                            # Veritabanında işaretle
+                                            await self._mark_message_sent(group_id)
+                                            
+                                            # İstatistik güncelle
+                                            if not hasattr(self, 'stats'):
+                                                self.stats = {'total_sent': 0, 'last_sent': None}
+                                            self.stats['total_sent'] += 1
+                                            self.stats['last_sent'] = datetime.now()
+                                        else:
+                                            logger.warning(f"Grup {group_id} için uygun şablon bulunamadı")
+                                    except Exception as e:
+                                        logger.error(f"Grup {group_id} için mesaj gönderimi başarısız: {str(e)}")
+                                        logger.debug(traceback.format_exc())
+                                
+                                # Her batch arasında bekleme
+                                if not self.stop_event.is_set() and self.is_running and batch_index < len(batches) - 1:
+                                    logger.info(f"Batch {batch_index+1} tamamlandı, {self.batch_interval} saniye bekleniyor...")
+                                    await asyncio.sleep(self.batch_interval)
+                            
+                            # İstatistikleri güncelle
+                            self.last_run = now
+                            
+                            # Bir sonraki çalışma zamanını planla
+                            self.next_run_time = now + timedelta(seconds=self.current_interval)
+                            logger.info(f"Mesaj gönderimi tamamlandı. Bir sonraki mesaj gönderimi: {self.next_run_time.strftime('%H:%M:%S')}")
+                        else:
+                            logger.warning("Aktif grup bulunamadı! Veritabanı sorgusu kontrol edilmeli.")
+                            # Aktif grup kontrolünü 10 dakika sonra tekrar et
+                            self.next_run_time = now + timedelta(minutes=10)
+                            logger.info(f"Gruplar 10 dakika sonra tekrar kontrol edilecek: {self.next_run_time.strftime('%H:%M:%S')}")
+                    
+                    # Her 1 saniyede bir kontrol et
+                    await asyncio.sleep(1)
+                    
+                except Exception as e:
+                    logger.error(f"Mesaj gönderme döngüsünde hata: {str(e)}")
+                    logger.debug(traceback.format_exc())
+                    # Hata durumunda bekle ve tekrar dene
+                    await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            logger.info("MessageService çalışma döngüsü iptal edildi")
+        except Exception as e:
+            logger.error(f"MessageService çalışma döngüsünde kritik hata: {str(e)}")
+            logger.debug(traceback.format_exc())
+        finally:
+            logger.info("MessageService çalışma döngüsü tamamlandı")
+    
+    async def _get_active_groups(self) -> List[Dict]:
+        """
+        Aktif grupları veritabanından alır.
+        
+        Returns:
+            List[Dict]: Aktif grupların listesi
+        """
+        try:
+            groups = []
+            
+            # Veritabanı bağlantısını kontrol et
+            if not hasattr(self.db, 'connected') or not self.db.connected:
+                try:
+                    await self.db.connect()
+                except Exception as e:
+                    logger.error(f"Veritabanı bağlantısı kurulamadı: {str(e)}")
+                    return []
+            
+            # Aktif grupları ve son mesaj zamanlarını al
+            query = """
+                SELECT g.group_id, g.name, g.member_count, 
+                       COALESCE(MAX(m.sent_at), '1970-01-01'::timestamp) as last_message_time
+                FROM groups g
+                LEFT JOIN messages m ON g.group_id = m.group_id
+                WHERE g.is_active = TRUE 
+                AND (g.error_count < 5 OR g.permanent_error = FALSE)
+                GROUP BY g.group_id, g.name, g.member_count
+                ORDER BY last_message_time ASC, g.member_count DESC
+                LIMIT 30
+            """
+            
+            rows = await self.db.fetchall(query)
+            
+            if not rows:
+                logger.warning("Veritabanında aktif grup bulunamadı")
+                return []
+            
+            current_time = datetime.now()
+            min_interval = timedelta(minutes=self.interval_multiplier * 60)  # Minimum aralık (saniye)
+            
+            # Grup listesini oluştur ve zaman filtresi uygula
+            for row in rows:
+                if len(row) < 4:  # En azından 4 sütun olmalı (group_id, name, member_count, last_message_time)
+                    logger.warning(f"Grup verisi eksik sütunlar içeriyor: {row}")
+                    continue
+                
+                group_id = row[0]
+                group_name = row[1]
+                member_count = row[2] or 0
+                last_message_time = row[3]
+                
+                # Son mesaj zamanından itibaren geçen süreyi kontrol et
+                if isinstance(last_message_time, str):
+                    try:
+                        last_message_time = datetime.fromisoformat(last_message_time.replace('Z', '+00:00'))
+                    except (ValueError, TypeError):
+                        last_message_time = datetime(1970, 1, 1)  # Unix epoch başlangıcı
+                
+                time_diff = current_time - last_message_time
+                
+                # Minimum aralık geçtiyse grubu listeye ekle
+                if time_diff >= min_interval:
+                    groups.append({
+                        'group_id': group_id,
+                        'name': group_name,
+                        'member_count': member_count,
+                        'last_message': last_message_time,
+                        'time_diff_hours': time_diff.total_seconds() / 3600  # Saat cinsinden
+                    })
+                    logger.debug(f"Aktif grup eklendi: {group_name}, son mesaj: {last_message_time}, süre farkı: {time_diff.total_seconds() / 3600:.2f} saat")
+                else:
+                    logger.debug(f"Grup minimum aralığı geçmedi: {group_name}, son mesaj: {last_message_time}, süre farkı: {time_diff.total_seconds() / 60:.2f} dakika")
+            
+            # Önce hiç mesaj gönderilmemiş gruplara öncelik ver, sonra son mesaj zamanına göre sırala
+            # Yoksa, üye sayısına göre en çok üyesi olandan en aza doğru sırala
+            groups = sorted(groups, key=lambda g: (g['last_message'] == datetime(1970, 1, 1), g['last_message'], -g['member_count']))
+            logger.info(f"Toplam {len(groups)} aktif grup bulundu ve aralık kontrolünden geçti")
+            
+            return groups
+            
+        except Exception as e:
+            logger.error(f"Aktif grupları alma hatası: {str(e)}")
+            logger.debug(traceback.format_exc())
+            return []
+    
+    async def _select_message_template(self, group: Dict) -> str:
+        """
+        Belirtilen grup için mesaj şablonu seçer.
+        
+        Args:
+            group: Grup bilgileri
+            
+        Returns:
+            str: Mesaj şablonu
+        """
+        try:
+            # Önce grup kategorisine göre şablon seçmeyi dene
+            group_category = group.get('category', 'general')
+            templates = []
+            
+            # Kategoriye göre şablonları filtrele
+            for template_id, template in self.message_templates.items():
+                if template.get('category') == group_category:
+                    templates.append(template.get('content'))
+            
+            # Hiç şablon bulunamadıysa genel şablonları kullan
+            if not templates:
+                for template_id, template in self.message_templates.items():
+                    if template.get('category') == 'general':
+                        templates.append(template.get('content'))
+            
+            # Rastgele bir şablon seç
+            if templates:
+                return random.choice(templates)
+            else:
+                # Son çare olarak varsayılan bir mesaj
+                return "Merhaba! Bu otomatik bir mesajdır."
+        except Exception as e:
+            logger.error(f"Mesaj şablonu seçilirken hata: {str(e)}", exc_info=True)
+            return "Merhaba! Bu otomatik bir mesajdır."
+    
+    async def _mark_message_sent(self, group_id: int) -> None:
+        """
+        Mesaj gönderimini veritabanında kaydeder.
+        
+        Args:
+            group_id: Grup ID
+        """
+        try:
+            # Veritabanında mesaj kaydı
+            query = """
+                INSERT INTO messages (group_id, content, sent_at, status)
+                VALUES (%s, %s, %s, %s)
+            """
+            await self.db.execute(
+                query, 
+                (group_id, "Otomatik mesaj", datetime.now(), "sent")
+            )
+            
+            # İstatistik güncelle
+            if group_id in self.message_stats:
+                self.message_stats[group_id]['message_count'] += 1
+                self.message_stats[group_id]['last_message'] = datetime.now()
+            else:
+                self.message_stats[group_id] = {
+                    'message_count': 1,
+                    'last_message': datetime.now()
+                }
+        except Exception as e:
+            logger.error(f"Mesaj kaydedilirken hata: {str(e)}", exc_info=True)
+    
+    async def _run_async_db_method(self, method, *args, **kwargs):
+        """
+        Veritabanı metodunu async olarak çalıştırır.
+        
+        Args:
+            method: Veritabanı metodu
+            *args: Argümanlar
+            **kwargs: Anahtar kelime argümanları
+            
+        Returns:
+            Any: Metodun dönüş değeri
+        """
+        if asyncio.iscoroutinefunction(method):
+            return await method(*args, **kwargs)
+        else:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, lambda: method(*args, **kwargs))
+        
+    async def stop(self) -> None:
+        """
+        Servisi durdurur.
+        
+        Returns:
+            None
+        """
+        logger.info(f"{self.service_name} servisi durduruluyor...")
+        
+        # Çalışma durumunu güncelle
+        self.running = False  # running özelliğini güncelle
         self.is_running = False
         
-        # Durdurma sinyalini ayarla (varsa)
-        if hasattr(self, 'stop_event') and self.stop_event:
-            self.stop_event.set()
-            
-        # Diğer durdurma sinyallerini de kontrol et
-        if hasattr(self, 'shutdown_event'):
-            self.shutdown_event.set()
+        # GroupHandler'ı durdur
+        if self.group_handler:
+            await self.group_handler.stop()
         
-        # Çalışan görevleri iptal et
-        try:
-            service_tasks = [task for task in asyncio.all_tasks() 
-                        if (task.get_name().startswith(f"{self.name}_task_") or
-                            task.get_name().startswith(f"{self.service_name}_task_")) and 
-                        not task.done() and not task.cancelled()]
-                        
-            for task in service_tasks:
-                task.cancel()
+        # Aktif görevleri iptal et
+        tasks = [task for task in asyncio.all_tasks() 
+                if task.get_name().startswith(f"{self.service_name}_task_") and 
+                not task.done()]
                 
-            # Kısa bir süre bekle
+        for task in tasks:
             try:
-                await asyncio.sleep(0.5)
-            except asyncio.CancelledError:
-                pass
+                task.cancel()
+            except Exception as e:
+                logger.error(f"Görev iptal edilirken hata: {str(e)}")
                 
-            # İptal edilen görevlerin tamamlanmasını kontrol et
-            if service_tasks:
-                await asyncio.wait(service_tasks, timeout=2.0)
-        except Exception as e:
-            logger.error(f"{self.service_name} görevleri iptal edilirken hata: {str(e)}")
-            
-        logger.info(f"{self.service_name} servisi durduruldu.")
+        # İstatistiği güncelle
+        self.last_run = datetime.now()
+        logger.info(f"{self.service_name} servisi durduruldu")
     
     async def load_messages(self):
         """

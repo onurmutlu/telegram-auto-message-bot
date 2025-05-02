@@ -11,14 +11,20 @@
 import asyncio
 import logging
 import functools
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 import sqlite3
 import inspect
 import random
 import traceback
 
-from telethon import errors
+from telethon import errors, utils
+from telethon.tl.types import User, Message, Channel, Chat, ChatFull
+from telethon.errors import (
+    RPCError, FloodWaitError, UserPrivacyRestrictedError,
+    ChatAdminRequiredError, UserAlreadyParticipantError,
+    PhoneNumberBannedError, UserBannedInChannelError
+)
 from bot.services.base_service import BaseService
 
 logger = logging.getLogger(__name__)
@@ -30,31 +36,53 @@ class UserService(BaseService):
     
     def __init__(self, client, config, db, stop_event=None):
         """
-        UserService sınıfının başlatıcısı.
+        Kullanıcı Servisi yapılandırıcısı.
         
         Args:
             client: Telegram istemcisi
             config: Yapılandırma nesnesi
             db: Veritabanı nesnesi
-            stop_event: Durdurma sinyali için event nesnesi
+            stop_event: Durma eventi
         """
-        # BaseService.__init__ çağrısı eklendi - burada "user" adını belirtmek kritik
         super().__init__("user", client, config, db, stop_event)
+        
+        # Çalışma durumu
+        self.running = False
+        self.is_running = False
+        
+        # Önbellek
+        self.user_cache = {}  # Kullanıcı önbelleği
+        self.cache_ttl = 3600  # Saniye cinsinden önbellek süresi (1 saat)
+        
+        # İstatistikler
+        self.user_stats = {}  # Kullanıcı istatistikleri
+        self.registered_handlers = []  # Kayıtlı event handler'lar
+        
+        # DM servisi referansı için yer tutucu
+        self.dm_service = None
         
         # Diğer özellikler...
         self.users = {}
         self.stats = {
             'total_users': 0,
-            'new_users': 0,
-            'active_users': 0
+            'users_added': 0
         }
         self.last_user_update = None
-        self.user_cache = {}
-        self.user_stats = {}
-        self.cache_ttl = 3600  # 1 saat önbellek süresi
-        self.registered_handlers = []  # Event handler'ları saklamak için liste
         self.cache_hit_ratio = 0.0
         self.error_count = 0
+        
+        # Durum
+        self.start_time = None
+        self.processed_users = 0
+        self.last_activity = datetime.now()
+        
+        # Bot çalışma modu
+        self._is_user_mode = None  # Başlatma sırasında belirlenecek
+        
+        # Servis referansları
+        self.services = {}
+        
+        logger.info("UserService başlatıldı")
     
     def set_services(self, services):
         """
@@ -180,7 +208,7 @@ class UserService(BaseService):
                         raise
             except asyncio.TimeoutError:
                 logger.warning(f"Kullanıcı entity alma zaman aşımı: {user_id}")
-            except (ValueError, errors.RPCError) as e:
+            except (ValueError, RPCError) as e:
                 logger.warning(f"Kullanıcı entity alınamadı ({user_id}): {str(e)}")
                 
                 # Alternatif: Event'ten kullanıcı bilgisini al
@@ -338,6 +366,7 @@ class UserService(BaseService):
         Servisi güvenli bir şekilde durdurur.
         """
         self.running = False
+        self.is_running = False
         logger.info("User servisi durduruluyor...")
         
         # Event handler'ları kaldır
@@ -754,6 +783,7 @@ class UserService(BaseService):
         if not self.initialized:
             await self.initialize()
             
+        self.running = True
         self.is_running = True
         self.start_time = datetime.now()
         logger.info(f"{self.service_name} servisi başlatıldı.")

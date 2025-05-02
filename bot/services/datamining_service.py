@@ -2,6 +2,16 @@ from datetime import datetime
 import logging
 from .base_service import BaseService
 import asyncio
+import traceback
+from telethon import errors
+from telethon.errors import (
+    RPCError, FloodWaitError, ChannelPrivateError, 
+    ChannelInvalidError, ChannelsTooMuchError
+)
+from telethon.tl.types import User, Message, Channel, Chat, ChatFull, PeerChannel
+from telethon.tl.functions.channels import GetParticipantsRequest, GetFullChannelRequest, GetChannelsRequest
+from telethon.tl.functions.messages import GetChatsRequest, GetFullChatRequest
+from telethon.tl.types import ChannelParticipantsRecent, InputChannel, InputPeerChannel, InputPeerChat
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +76,7 @@ class DataMiningService(BaseService):
         if not self.initialized:
             await self.initialize()
             
-        self.is_running = True
+        self.running = True
         self.start_time = datetime.now()
         logger.info(f"{self.service_name} servisi başlatıldı.")
         return True
@@ -79,7 +89,7 @@ class DataMiningService(BaseService):
             None
         """
         # Önce durum değişkenini güncelle
-        self.is_running = False
+        self.running = False
         
         # Durdurma sinyalini ayarla (varsa)
         if hasattr(self, 'stop_event') and self.stop_event:
@@ -204,11 +214,14 @@ class DataMiningService(BaseService):
     async def create_mining_job(self, job_data):
         """Yeni veri madenciliği işi oluşturur"""
         try:
-            job_id = await self.db.execute(
-                "INSERT INTO mining_data (group_id, keywords, is_active) VALUES ($1, $2, $3) RETURNING id",
+            params = (
                 job_data['group_id'],
                 job_data['keywords'],
                 job_data.get('is_active', True)
+            )
+            job_id = await self.db.execute(
+                "INSERT INTO mining_data (group_id, keywords, is_active) VALUES ($1, $2, $3) RETURNING id",
+                params
             )
             
             await self._load_mining_data()
@@ -223,12 +236,15 @@ class DataMiningService(BaseService):
     async def update_mining_job(self, job_id, job_data):
         """Veri madenciliği işini günceller"""
         try:
-            await self.db.execute(
-                "UPDATE mining_data SET group_id = $1, keywords = $2, is_active = $3 WHERE id = $4",
+            params = (
                 job_data['group_id'],
                 job_data['keywords'],
                 job_data.get('is_active', True),
                 job_id
+            )
+            await self.db.execute(
+                "UPDATE mining_data SET group_id = $1, keywords = $2, is_active = $3 WHERE id = $4",
+                params
             )
             
             await self._load_mining_data()
@@ -243,8 +259,8 @@ class DataMiningService(BaseService):
     async def delete_mining_job(self, job_id):
         """Veri madenciliği işini siler"""
         try:
-            await self.db.execute("DELETE FROM mining_logs WHERE mining_id = $1", job_id)
-            await self.db.execute("DELETE FROM mining_data WHERE id = $1", job_id)
+            await self.db.execute("DELETE FROM mining_logs WHERE mining_id = $1", (job_id,))
+            await self.db.execute("DELETE FROM mining_data WHERE id = $1", (job_id,))
             
             await self._load_mining_data()
             await self._load_mining_stats()
@@ -259,11 +275,10 @@ class DataMiningService(BaseService):
     async def log_mining_result(self, job_id, user_id, data):
         """Veri madenciliği sonucunu kaydeder"""
         try:
+            params = (job_id, user_id, data)
             await self.db.execute(
                 "INSERT INTO mining_logs (mining_id, user_id, data) VALUES ($1, $2, $3)",
-                job_id,
-                user_id,
-                data
+                params
             )
             
             await self._load_mining_stats()
@@ -290,7 +305,7 @@ class DataMiningService(BaseService):
         logger.info("Veri toplama görevi başlatılıyor...")
         
         # Her 5 dakikada bir grup ve kullanıcı verilerini topla (önceden 30 dakikaydı)
-        while self.is_running and not self.stop_event.is_set():
+        while self.running and not self.stop_event.is_set():
             try:
                 # Grupları güncelle
                 await self.update_group_data()
@@ -318,115 +333,133 @@ class DataMiningService(BaseService):
             logger.info("Grup verilerini güncelleme görevi başladı")
             
             # Grup servisine erişim kontrolü
-            if not hasattr(self, 'services') or 'group' not in self.services:
+            if not hasattr(self, 'group_service') or not self.group_service:
                 logger.warning("Grup servisi bulunamadı, grup verileri güncellenemiyor")
-                return
+                
+                # Alternatif olarak, eğer servisler içinde grup servisi varsa kullan
+                if hasattr(self, 'services') and 'group' in self.services:
+                    self.group_service = self.services['group']
+                    logger.info("Grup servisi servisler listesinden bulundu")
+                else:
+                    return False
             
-            group_service = self.services['group']
-            
-            # Tüm grupları keşfet (limit artırıldı)
-            discovered_groups = await group_service.discover_groups(limit=300)
-            
+            # Grup servisinden grupları al
+            try:
+                # get_target_groups metodu var mı kontrol et
+                if hasattr(self.group_service, 'get_target_groups'):
+                    groups = await self.group_service.get_target_groups()
+                    if not groups:
+                        logger.warning("Grup servisi grupları getirmedi")
+                        return False
+                else:
+                    logger.warning("Grup servisinde get_target_groups metodu bulunamadı")
+                    return False
+            except Exception as e:
+                logger.error(f"Grup verilerini alma hatası: {str(e)}")
+                return False
+                
+            # Veritabanı bağlantısını kontrol et
+            if not self.db.connected:
+                await self.db.connect()
+                
             updated_count = 0
             new_count = 0
             
-            # Her grup için verileri güncelle
-            for group in discovered_groups:
-                group_id = group.get('id')
-                title = group.get('title')
-                
-                # Entity bilgilerini al
+            # Her grup için:
+            for group in groups:
                 try:
+                    group_id = group.get('group_id')
+                    if not group_id:
+                        continue
+                    
+                    # Grup entity'sini al
                     entity = None
                     try:
+                        # ID'nin türünü kontrol et ve debug bilgisi ekle
+                        real_id = int(group_id)
+                        logger.debug(f"Entity almaya çalışılıyor: ID={real_id}, tip={type(real_id)}")
+                        entity = await self.client.get_entity(real_id)
+                    except ValueError:
+                        # Sayısal değilse doğrudan kullan (username olabilir)
+                        logger.debug(f"Entity almaya çalışılıyor: ID={group_id}, (sayısal olmayan)")
                         entity = await self.client.get_entity(group_id)
-                    except Exception as entity_error:
-                        logger.error(f"Grup entity alınamadı: {group_id}, hata: {str(entity_error)}")
+                    except RPCError as e:
+                        logger.warning(f"Grup entity alma hatası: {group_id} -> {str(e)}")
+                        continue
+                        
+                    # Entity alınamadıysa
+                    if not entity:
+                        logger.warning(f"Grup entity alınamadı: {group_id}")
+                        continue
                     
-                    # Grup verilerini hazırla
+                    # Entity'den grup verilerini çıkar
                     group_data = {
-                        'group_id': group_id,
-                        'name': title,
-                        'username': getattr(entity, 'username', None) if entity else None,
-                        'description': None,  # Daha sonra full_channel bilgisinden alınacak
-                        'is_public': getattr(entity, 'username', None) is not None if entity else True,
-                        'source': 'discover',
+                        'id': group_id,
+                        'name': getattr(entity, 'title', None) or group.get('name', f"Grup {group_id}"),
+                        'username': getattr(entity, 'username', None),
+                        'description': getattr(entity, 'about', None),
+                        'member_count': getattr(entity, 'participants_count', 0),
+                        'is_public': getattr(entity, 'username', None) is not None,
+                        'source': 'discover'
                     }
                     
-                    # FullChannel bilgisini almaya çalış
-                    try:
-                        from telethon.tl.functions.channels import GetFullChannelRequest
-                        if entity:
-                            full_channel = await self.client(GetFullChannelRequest(entity))
-                            if hasattr(full_channel, 'full_chat') and hasattr(full_channel.full_chat, 'about'):
-                                group_data['description'] = full_channel.full_chat.about
-                            if hasattr(full_channel, 'chats') and len(full_channel.chats) > 0:
-                                group_data['member_count'] = full_channel.chats[0].participants_count
-                    except Exception as full_error:
-                        logger.debug(f"Grup tam bilgileri alınamadı: {group_id}, hata: {str(full_error)}")
+                    # Mevcut grup mu kontrol et
+                    query = "SELECT group_id FROM groups WHERE group_id = %s"
+                    existing_group = await self.db.fetchone(query, (group_id,))
                     
-                    # Grup verilerini veritabanına kaydet
-                    try:
-                        # Veritabanı bağlantısını kontrol et
-                        if not self.db.connected:
-                            await self.db.connect()
-                            
-                        # Grup var mı kontrol et
-                        query = "SELECT group_id FROM groups WHERE group_id = %s"
-                        result = await self.db.fetchone(query, (group_id,))
+                    if existing_group:
+                        # Grubu güncelle
+                        update_query = """
+                        UPDATE groups SET
+                            name = %s, 
+                            username = %s, 
+                            description = %s, 
+                            is_public = %s
+                        WHERE group_id = %s
+                        """
                         
-                        if result:
-                            # Mevcut grubu güncelle
-                            update_query = """
-                            UPDATE groups SET 
-                                name = %s, 
-                                username = %s, 
-                                description = %s, 
-                                is_public = %s,
-                                updated_at = NOW()
-                            WHERE group_id = %s
-                            """
-                            params = (
-                                group_data['name'], 
-                                group_data['username'], 
-                                group_data['description'], 
-                                group_data['is_public'],
-                                group_id
-                            )
-                            await self.db.execute(update_query, *params)
-                            updated_count += 1
-                        else:
-                            # Yeni grup ekle
-                            insert_query = """
-                            INSERT INTO groups (
-                                group_id, name, username, description, 
-                                is_public, source, join_date, created_at
-                            ) VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
-                            """
-                            params = (
-                                group_id, 
-                                group_data['name'], 
-                                group_data['username'], 
-                                group_data['description'], 
-                                group_data['is_public'],
-                                group_data['source']
-                            )
-                            await self.db.execute(insert_query, *params)
-                            new_count += 1
+                        params = (
+                            group_data['name'], 
+                            group_data['username'], 
+                            group_data['description'], 
+                            group_data['is_public'],
+                            group_id
+                        )
+                        await self.db.execute(update_query, params)
+                        updated_count += 1
+                    else:
+                        # Yeni grup ekle
+                        insert_query = """
+                        INSERT INTO groups (
+                            group_id, name, username, description, is_public, source
+                        ) VALUES (%s, %s, %s, %s, %s, %s)
+                        """
                         
-                    except Exception as db_error:
-                        logger.error(f"Grup veritabanına kaydedilirken hata: {str(db_error)}")
-                    
-                    # Data mining tablosuna da kaydet
+                        params = (
+                            group_id, 
+                            group_data['name'], 
+                            group_data['username'], 
+                            group_data['description'], 
+                            group_data['is_public'],
+                            group_data['source']
+                        )
+                        await self.db.execute(insert_query, params)
+                        new_count += 1
+                        
+                    # Mining verisini kaydet
                     await self.store_group_mining_data(group_id, group_data)
                     
-                except Exception as group_error:
-                    logger.error(f"Grup verisi işlenirken hata: {str(group_error)}")
+                except Exception as e:
+                    logger.error(f"Grup verisi güncellenirken hata: {str(e)}")
+                    logger.debug(traceback.format_exc())
             
-            logger.info(f"Grup verilerini güncelleme tamamlandı: {new_count} yeni, {updated_count} güncellendi")
-            
+            logger.info(f"Grup verileri güncellendi: {updated_count} güncellendi, {new_count} yeni eklendi")
+            return True
+                
         except Exception as e:
-            logger.error(f"Grup verilerini güncelleme hatası: {str(e)}", exc_info=True)
+            logger.error(f"Grup verilerini güncelleme işlemi başarısız: {str(e)}")
+            logger.debug(traceback.format_exc())
+            return False
 
     async def update_group_members(self):
         """
@@ -449,32 +482,126 @@ class DataMiningService(BaseService):
             
             total_users = 0
             processed_groups = 0
+            error_groups = 0
             
-            # Her grup için üyeleri al
+            # Rate limit önlemi - işlem adımı başına gecikme ekle
+            delay_between_groups = 5  # saniye
+            
+            # Her grup için
             for group in groups:
-                group_id = group[0]
-                group_name = group[1]
+                # Durdurma sinyali kontrol et
+                if self.stop_event.is_set() or not self.running:
+                    logger.info("Durdurma sinyali alındı, grup üyesi güncelleme işlemi yarıda kesiliyor")
+                    break
+                
+                # Gruba başlamadan önce bekle - rate limit önlemi
+                await asyncio.sleep(delay_between_groups)
+                
+                group_id = group[0] if isinstance(group, tuple) else group.get('group_id')
+                group_name = group[1] if isinstance(group, tuple) else group.get('name')
                 
                 try:
-                    logger.info(f"Grup üyeleri alınıyor: {group_name} ({group_id})")
+                    logger.info(f"Grubun üyeleri alınıyor: {group_name} ({group_id})")
                     
-                    # Telethon ile grup üyelerini al
-                    from telethon.tl.functions.channels import GetParticipantsRequest
-                    from telethon.tl.types import ChannelParticipantsRecent
-                    
-                    entity = None
                     try:
+                        # ID'nin türünü kontrol et ve debug bilgisi ekle
+                        real_id = int(group_id)
+                        logger.debug(f"Entity almaya çalışılıyor: ID={real_id}, tip={type(real_id)}")
+                        entity = await self.client.get_entity(real_id)
+                    except ValueError:
+                        # Sayısal değilse doğrudan kullan (username olabilir)
+                        logger.debug(f"Entity almaya çalışılıyor: ID={group_id}, (sayısal olmayan)")
                         entity = await self.client.get_entity(group_id)
-                    except Exception as entity_error:
-                        logger.error(f"Grup entity alınamadı: {group_id}, hata: {str(entity_error)}")
+                    except RPCError as e:
+                        logger.warning(f"Grup entity alma hatası: {group_id} -> {str(e)}")
+                        continue
+                        
+                    # Entity alınamadıysa
+                    if not entity:
+                        logger.error(f"Grup {group_id} için entity alınamadı, grup atlanıyor")
                         continue
                     
                     # Üyeleri al (maksimum 200 -> 300)
                     participants = []
                     try:
-                        participants = await self.client(GetParticipantsRequest(
-                            entity, ChannelParticipantsRecent(), offset=0, limit=300, hash=0
-                        ))
+                        if hasattr(entity, 'megagroup') or hasattr(entity, 'channel') or hasattr(entity, 'username'):
+                            # Bu bir channel (süper grup / megagroup) veya username'i olan bir varlık
+                            from telethon.tl.functions.channels import GetParticipantsRequest
+                            from telethon.tl.types import ChannelParticipantsRecent, ChannelParticipantsAdmins
+                            
+                            try:
+                                # Önce adminleri almayı dene
+                                admin_participants = await self.client(GetParticipantsRequest(
+                                    channel=entity, 
+                                    filter=ChannelParticipantsAdmins(), 
+                                    offset=0, 
+                                    limit=100, 
+                                    hash=0
+                                ))
+                                
+                                # Sonra normal üyeleri almayı dene
+                                user_participants = await self.client(GetParticipantsRequest(
+                                    channel=entity, 
+                                    filter=ChannelParticipantsRecent(), 
+                                    offset=0, 
+                                    limit=200, 
+                                    hash=0
+                                ))
+                                
+                                # Eğer adminler alınabildiyse kullanıcıları ekle
+                                if hasattr(admin_participants, 'users') and admin_participants.users:
+                                    participants = admin_participants
+                                    logger.debug(f"Grup {group_id} için {len(admin_participants.users)} admin bulundu")
+                                
+                                # Eğer kullanıcılar alınabildiyse, katılımcılara ekle
+                                if hasattr(user_participants, 'users') and user_participants.users:
+                                    if not participants:
+                                        participants = user_participants
+                                    else:
+                                        # Admin ve kullanıcıları birleştir
+                                        # Basit birleştirme
+                                        admin_ids = set()
+                                        if hasattr(participants, 'users'):
+                                            admin_ids = {u.id for u in participants.users}
+                                        
+                                        # Adminler arasında olmayan kullanıcıları ekle
+                                        for user in user_participants.users:
+                                            if user.id not in admin_ids:
+                                                participants.users.append(user)
+                                                
+                                    logger.debug(f"Grup {group_id} için {len(user_participants.users)} kullanıcı bulundu")
+                                    
+                            except Exception as part_error:
+                                logger.error(f"Grup üyeleri alınamadı (channel): {group_id}, hata: {str(part_error)}")
+                                raise # Üst seviye exception handler'a gönder
+                        elif hasattr(entity, 'chat_id') or str(entity.__class__).find('Chat') != -1:
+                            # Bu bir normal chat
+                            from telethon.tl.functions.messages import GetFullChatRequest
+                            
+                            try:
+                                # Chat ID'yi al
+                                chat_id = getattr(entity, 'chat_id', getattr(entity, 'id', None))
+                                
+                                if chat_id:
+                                    # Chat bilgilerini al
+                                    full_chat = await self.client(GetFullChatRequest(chat_id=chat_id))
+                                    
+                                    if hasattr(full_chat, 'users'):
+                                        # Telethon'un beklediği formatı oluştur
+                                        class SimpleParticipants:
+                                            def __init__(self, users):
+                                                self.users = users
+                                                
+                                        participants = SimpleParticipants(full_chat.users)
+                                        logger.debug(f"Grup {group_id} için {len(full_chat.users)} kullanıcı bulundu (normal chat)")
+                            except Exception as chat_error:
+                                logger.error(f"Grup üyeleri alınamadı (chat): {group_id}, hata: {str(chat_error)}")
+                                raise # Üst seviye exception handler'a gönder
+                        else:
+                            # Bilinmeyen bir entity tipi
+                            logger.warning(f"Grup {group_id} için bilinmeyen entity tipi: {type(entity)}, öznitelikler: {dir(entity)}")
+                            continue
+                            
                     except Exception as part_error:
                         logger.error(f"Grup üyeleri alınamadı: {group_id}, hata: {str(part_error)}")
                         continue
@@ -482,6 +609,8 @@ class DataMiningService(BaseService):
                     if not participants or not hasattr(participants, 'users') or not participants.users:
                         logger.warning(f"Grup {group_id} için üye bulunamadı")
                         continue
+                    
+                    logger.info(f"Grup {group_id} için {len(participants.users)} üye bulundu")
                     
                     # Her kullanıcı için
                     user_count = 0
@@ -604,11 +733,16 @@ class DataMiningService(BaseService):
             ) VALUES (%s, NULL, %s, 'group', 'discover', %s, TRUE, NOW())
             """
             
+            # Parametre olarak tuple kullan, yıldız operatörü kullanma
             await self.db.execute(query, (group_id, group_id, data_json))
             
+            logger.debug(f"Grup verisi kaydedildi: {group_id}")
+            return True
+            
         except Exception as e:
-            logger.error(f"Grup mining verisi kaydedilirken hata: {str(e)}")
-
+            logger.error(f"Grup verisi kaydedilirken hata: {str(e)}")
+            return False
+            
     async def store_user_mining_data(self, user_id, user_data, group_id=None):
         """
         Kullanıcı verilerini data_mining tablosuna kaydeder
@@ -627,10 +761,15 @@ class DataMiningService(BaseService):
             ) VALUES (%s, %s, %s, 'user', 'discover', %s, TRUE, NOW())
             """
             
+            # Parametre olarak tuple kullan, yıldız operatörü kullanma
             await self.db.execute(query, (user_id, user_id, group_id, data_json))
             
+            logger.debug(f"Kullanıcı verisi kaydedildi: {user_id}")
+            return True
+            
         except Exception as e:
-            logger.error(f"Kullanıcı mining verisi kaydedilirken hata: {str(e)}")
+            logger.error(f"Kullanıcı verisi kaydedilirken hata: {str(e)}")
+            return False
 
     async def get_group_analytics(self, group_id=None, limit=10):
         """
@@ -680,4 +819,12 @@ class DataMiningService(BaseService):
         Diğer servislere referansları ayarlar
         """
         self.services = services
+        
+        # Group Service referansını özel olarak ayarla
+        if 'group' in services:
+            self.group_service = services['group']
+            logger.info("DataMiningService, GroupService'e başarıyla bağlandı")
+        else:
+            logger.warning("Grup servisi bulunamadı, grup verileri güncellenemiyor")
+            
         logger.info("DataMiningService diğer servislere bağlandı") 

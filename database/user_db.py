@@ -139,170 +139,219 @@ class UserDatabase:
     
     async def execute(self, query, params=None):
         """
-        SQL sorgusunu çalıştırır.
+        SQL komutunu çalıştırır.
         
         Args:
-            query (str): Çalıştırılacak SQL sorgusu
-            params (tuple): Sorgu parametreleri
+            query: SQL sorgusu
+            params: Parametreler (opsiyonel)
             
         Returns:
-            bool: İşlem başarılı ise True, değilse False
+            İlk satırın ilk sütunu (varsa)
         """
-        success = False
-        
         try:
-            # Bağlantı kontrolü
-            if not self.connected or self.conn is None:
+            if not self.connected:
                 await self.connect()
-            
-            # Cursor kontrolü ve gerekirse yeniden oluşturma
-            try:
-                # Cursor'ın kapalı olup olmadığını kontrol et
-                if self.cursor is None or self.cursor.closed:
-                    self.cursor = self.conn.cursor()
-            except (psycopg2.InterfaceError, AttributeError):
-                # Hata durumunda yeni cursor oluştur
-                self.cursor = self.conn.cursor()
-            
-            # Sorguyu çalıştır
-            if params:
-                self.cursor.execute(query, params)
-            else:
-                self.cursor.execute(query)
                 
-            # Değişiklikleri kaydet
-            self.conn.commit()
-            
-            logger.debug(f"SQL sorgusu başarıyla çalıştırıldı: {query[:50]}...")
-            success = True
-        except psycopg2.OperationalError as e:
-            # Bağlantı hatası durumunda yeniden bağlanmayı dene
-            logger.warning(f"Veritabanı bağlantı hatası, yeniden bağlanılıyor: {str(e)}")
-            await self.connect()
-            try:
-                if params:
-                    self.cursor.execute(query, params)
+            # Parametrelerin formatı hakkında bilgi ver
+            param_info = ""
+            if params:
+                if isinstance(params, (list, tuple)):
+                    param_info = f", {len(params)} parametre ile"
+                elif isinstance(params, dict):
+                    param_info = f", {len(params)} anahtarlı parametre ile"
                 else:
-                    self.cursor.execute(query)
+                    param_info = f", tek parametre ile"
+            
+            # Sorguyu logla (kısaltılmış)
+            if len(query) > 100:
+                logger.debug(f"SQL sorgusu çalıştırılıyor{param_info}: {query[:100]}...")
+            else:
+                logger.debug(f"SQL sorgusu çalıştırılıyor{param_info}: {query}")
+                
+            # Açıkça belirt: Parametreler tuple/list tipinde değilse, tek bir değerse
+            # Postgres kütüphanesi bunu tek elemanlı bir tuple içine koymalı
+            # Örnek: execute("... WHERE id = %s", 5) değil, execute("... WHERE id = %s", (5,)) olmalı
+            if params and not isinstance(params, (list, tuple, dict)) and not hasattr(params, '__iter__'):
+                params = (params,)
+                
+            # Cursor kontrolü
+            if not self.cursor:
+                self.cursor = self.conn.cursor()
+                
+            # Sorgu çalıştır
+            self.cursor.execute(query, params)
+            
+            # SQL tipi kontrol et ve uygun şekilde döndür
+            if query.strip().upper().startswith(('SELECT', 'WITH')):
+                # Eğer veri döndüren bir sorgu ise (SELECT, WITH)
+                result = self.cursor.fetchone()
+                if result:
+                    return result[0]  # İlk satırın ilk sütunu
+                return None
+            elif query.strip().upper().startswith('INSERT') and 'RETURNING' in query.strip().upper():
+                # INSERT ... RETURNING ile ID döndüren sorgular için
+                result = self.cursor.fetchone()
+                if result:
+                    return result[0]
+                return None
+            else:
+                # DML sorguları için
                 self.conn.commit()
-                success = True
-            except Exception as retry_error:
-                logger.error(f"Yeniden deneme başarısız: {str(retry_error)}")
+                return self.cursor.rowcount
+                
         except Exception as e:
-            # Hata durumunda rollback yap
-            if self.conn:
-                self.conn.rollback()
-            logger.error(f"SQL sorgusu çalıştırma hatası: {e}, Sorgu: {query[:50]}...")
-        
-        return success
-    
+            error_msg = f"SQL sorgu hatası: {str(e)}, sorgu: {query}"
+            if params:
+                if isinstance(params, (list, tuple)) and len(params) <= 5:
+                    error_msg += f", parametreler: {params}"
+                elif isinstance(params, dict) and len(params) <= 5:
+                    error_msg += f", parametreler: {params}"
+                else:
+                    error_msg += f", {len(params) if hasattr(params, '__len__') else 'bilinmeyen sayıda'} parametre"
+            
+            logger.error(error_msg)
+            return None
+            
     async def fetchone(self, query, params=None):
         """
-        Tek bir sonuç satırı döndüren SQL sorgusunu çalıştırır.
+        SQL sorgusu ile tek sonuç döndürür.
         
         Args:
-            query (str): Çalıştırılacak SQL sorgusu
-            params (tuple): Sorgu parametreleri
+            query: SQL sorgusu
+            params: Parametreler (opsiyonel)
             
         Returns:
-            tuple: Sorgu sonucu, yoksa None
+            Sonuç satırı veya None
         """
-        result = None
-        
         try:
-            # Bağlantı kontrolü
-            if not self.connected or self.conn is None:
+            if not self.connected:
                 await self.connect()
-            
-            # Cursor kontrolü ve gerekirse yeniden oluşturma
-            try:
-                # Cursor'ın kapalı olup olmadığını kontrol et
-                if self.cursor is None or self.cursor.closed:
-                    self.cursor = self.conn.cursor()
-            except (psycopg2.InterfaceError, AttributeError):
-                # Hata durumunda yeni cursor oluştur
-                self.cursor = self.conn.cursor()
-            
-            # Sorguyu çalıştır
-            if params:
-                self.cursor.execute(query, params)
-            else:
-                self.cursor.execute(query)
                 
-            # Sonucu al
+            # Parametrelerin formatı hakkında bilgi ver
+            param_info = ""
+            if params:
+                if isinstance(params, (list, tuple)):
+                    param_info = f", {len(params)} parametre ile"
+                elif isinstance(params, dict):
+                    param_info = f", {len(params)} anahtarlı parametre ile"
+                else:
+                    param_info = f", tek parametre ile"
+            
+            # Sorguyu logla (kısaltılmış)
+            if len(query) > 100:
+                logger.debug(f"Tek kayıt SQL sorgusu{param_info}: {query[:100]}...")
+            else:
+                logger.debug(f"Tek kayıt SQL sorgusu{param_info}: {query}")
+                
+            # Tek elemanlı parametreyi tuple içine al
+            if params and not isinstance(params, (list, tuple, dict)) and not hasattr(params, '__iter__'):
+                params = (params,)
+            
+            # Cursor kontrolü
+            if not self.cursor:
+                self.cursor = self.conn.cursor()
+                
+            # Dictionary olarak sonuç döndürme için 
+            self.cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            
+            # Sorgu çalıştır
+            self.cursor.execute(query, params)
             result = self.cursor.fetchone()
             
-            logger.debug(f"SQL sorgusu fetchone başarıyla çalıştırıldı: {query[:50]}...")
-        except psycopg2.OperationalError as e:
-            # Bağlantı hatası durumunda yeniden bağlanmayı dene
-            logger.warning(f"Veritabanı bağlantı hatası, yeniden bağlanılıyor: {str(e)}")
-            await self.connect()
-            try:
-                if params:
-                    self.cursor.execute(query, params)
-                else:
-                    self.cursor.execute(query)
-                result = self.cursor.fetchone()
-            except Exception as retry_error:
-                logger.error(f"Yeniden deneme başarısız: {str(retry_error)}")
+            if result:
+                logger.debug(f"Sorgu başarılı, 1 kayıt bulundu")
+                # DictCursor ile sözlük benzeri erişim sağla
+                if hasattr(result, '_index_map'):
+                    # Sonucu dict'e dönüştür
+                    return dict(result)
+                return result
+            else:
+                logger.debug(f"Sorgu başarılı, kayıt bulunamadı")
+                return None
+                
         except Exception as e:
-            logger.error(f"SQL fetchone sorgusu çalıştırma hatası: {e}, Sorgu: {query[:50]}...")
-        
-        return result
-    
+            error_msg = f"Tek kayıt SQL sorgu hatası: {str(e)}, sorgu: {query}"
+            if params:
+                if isinstance(params, (list, tuple)) and len(params) <= 5:
+                    error_msg += f", parametreler: {params}"
+                elif isinstance(params, dict) and len(params) <= 5:
+                    error_msg += f", parametreler: {params}"
+                else:
+                    error_msg += f", {len(params) if hasattr(params, '__len__') else 'bilinmeyen sayıda'} parametre"
+            
+            logger.error(error_msg)
+            return None
+            
     async def fetchall(self, query, params=None):
         """
-        Birden fazla sonuç satırı döndüren SQL sorgusunu çalıştırır.
+        SQL sorgusu ile çoklu sonuç döndürür.
         
         Args:
-            query (str): Çalıştırılacak SQL sorgusu
-            params (tuple): Sorgu parametreleri
+            query: SQL sorgusu
+            params: Parametreler (opsiyonel)
             
         Returns:
-            list: Sorgu sonuçları listesi, yoksa boş liste
+            Sonuç satırları veya boş liste
         """
-        results = []
-        
         try:
-            # Bağlantı kontrolü
-            if not self.connected or self.conn is None:
+            if not self.connected:
                 await self.connect()
-            
-            # Cursor kontrolü ve gerekirse yeniden oluşturma
-            try:
-                # Cursor'ın kapalı olup olmadığını kontrol et
-                if self.cursor is None or self.cursor.closed:
-                    self.cursor = self.conn.cursor()
-            except (psycopg2.InterfaceError, AttributeError):
-                # Hata durumunda yeni cursor oluştur
-                self.cursor = self.conn.cursor()
-            
-            # Sorguyu çalıştır
-            if params:
-                self.cursor.execute(query, params)
-            else:
-                self.cursor.execute(query)
                 
-            # Sonuçları al
-            results = self.cursor.fetchall()
-            
-            logger.debug(f"SQL sorgusu fetchall başarıyla çalıştırıldı: {query[:50]}...")
-        except psycopg2.OperationalError as e:
-            # Bağlantı hatası durumunda yeniden bağlanmayı dene
-            logger.warning(f"Veritabanı bağlantı hatası, yeniden bağlanılıyor: {str(e)}")
-            await self.connect()
-            try:
-                if params:
-                    self.cursor.execute(query, params)
+            # Parametrelerin formatı hakkında bilgi ver
+            param_info = ""
+            if params:
+                if isinstance(params, (list, tuple)):
+                    param_info = f", {len(params)} parametre ile"
+                elif isinstance(params, dict):
+                    param_info = f", {len(params)} anahtarlı parametre ile"
                 else:
-                    self.cursor.execute(query)
-                results = self.cursor.fetchall()
-            except Exception as retry_error:
-                logger.error(f"Yeniden deneme başarısız: {str(retry_error)}")
+                    param_info = f", tek parametre ile"
+            
+            # Sorguyu logla (kısaltılmış)
+            if len(query) > 100:
+                logger.debug(f"Çoklu kayıt SQL sorgusu{param_info}: {query[:100]}...")
+            else:
+                logger.debug(f"Çoklu kayıt SQL sorgusu{param_info}: {query}")
+                
+            # Tek elemanlı parametreyi tuple içine al
+            if params and not isinstance(params, (list, tuple, dict)) and not hasattr(params, '__iter__'):
+                params = (params,)
+            
+            # Cursor kontrolü
+            if not self.cursor:
+                self.cursor = self.conn.cursor()
+                
+            # Dictionary olarak sonuç döndürme için 
+            self.cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            
+            # Sorgu çalıştır
+            self.cursor.execute(query, params)
+            result = self.cursor.fetchall()
+            
+            if result:
+                logger.debug(f"Sorgu başarılı, {len(result)} kayıt bulundu")
+                
+                # DictCursor ile sözlük benzeri erişim sağla
+                if result and hasattr(result[0], '_index_map'):
+                    # Sonucu dict listesine dönüştür
+                    return [dict(row) for row in result]
+                return result
+            else:
+                logger.debug(f"Sorgu başarılı, kayıt bulunamadı")
+                return []
+                
         except Exception as e:
-            logger.error(f"SQL fetchall sorgusu çalıştırma hatası: {e}, Sorgu: {query[:50]}...")
-        
-        return results
+            error_msg = f"Çoklu kayıt SQL sorgu hatası: {str(e)}, sorgu: {query}"
+            if params:
+                if isinstance(params, (list, tuple)) and len(params) <= 5:
+                    error_msg += f", parametreler: {params}"
+                elif isinstance(params, dict) and len(params) <= 5:
+                    error_msg += f", parametreler: {params}"
+                else:
+                    error_msg += f", {len(params) if hasattr(params, '__len__') else 'bilinmeyen sayıda'} parametre"
+            
+            logger.error(error_msg)
+            return []
 
     # CRUD operations for users and groups
     async def get_user_by_id(self, user_id):

@@ -215,15 +215,31 @@ async def setup_telegram_client(config):
         api_id = config.get('api_id')
         api_hash = config.get('api_hash')
         
+        # API bilgilerini string'den int'e çevir (eğer string ise)
+        if api_id and isinstance(api_id, str):
+            try:
+                api_id = int(api_id)
+            except ValueError:
+                print(f"HATA: API ID ({api_id}) geçerli bir sayı değil")
+                api_id = None
+        
         # Eksik API kimlik bilgilerini kontrol et
         if not api_id or not api_hash:
             print("UYARI: API kimlik bilgileri eksik, lütfen .env dosyasını kontrol edin.")
             print("API_ID ve API_HASH değerlerini my.telegram.org adresinden alabilirsiniz.")
             # Kullanıcıdan giriş iste
             if not api_id:
-                api_id = input("API ID: ")
+                api_id_str = input("API ID: ")
+                try:
+                    api_id = int(api_id_str)
+                except ValueError:
+                    print("Geçersiz API ID formatı, bir sayı olmalı")
+                    return None
             if not api_hash:
                 api_hash = input("API Hash: ")
+                if not api_hash:
+                    print("API Hash boş olamaz")
+                    return None
         
         # Session dosyasının yolunu belirle
         session_path = os.path.join(session_dir, "bot_session")
@@ -235,10 +251,22 @@ async def setup_telegram_client(config):
             api_hash
         )
         
-        # Oturum aç
-        await client.start()
+        # Bağlantı timeout'u ekle
+        try:
+            # Oturum aç
+            await asyncio.wait_for(client.start(), timeout=30.0)  # 30 saniyelik timeout
+        except asyncio.TimeoutError:
+            print("Telegram sunucusuna bağlanırken zaman aşımı oluştu. Lütfen internet bağlantınızı kontrol edin.")
+            return None
         
-        if not await client.is_user_authorized():
+        # Oturum kontrolü
+        try:
+            is_authorized = await client.is_user_authorized()
+        except Exception as auth_error:
+            print(f"Oturum kontrolü sırasında hata: {str(auth_error)}")
+            is_authorized = False
+            
+        if not is_authorized:
             print("Kullanıcı oturumu bulunamadı. Giriş yapılması gerekiyor.")
             
             # Telefon numarasını önce .env dosyasından almayı dene
@@ -250,30 +278,61 @@ async def setup_telegram_client(config):
             else:
                 print(f"Telefon numarası .env dosyasından alındı: {phone}")
                 
-            await client.send_code_request(phone)
-            code = input("Telegram'dan aldığınız kodu girin: ")
-            
             try:
-                await client.sign_in(phone, code)
-                print(f"Giriş başarılı! Oturum bilgileri {session_path} dosyasına kaydedildi.")
-                print("Bundan sonraki oturumlarda tekrar giriş yapmanız gerekmeyecek.")
-            except SessionPasswordNeededError:
-                password = input("İki faktörlü kimlik doğrulama şifrenizi girin: ")
-                await client.sign_in(password=password)
-                print(f"Giriş başarılı! Oturum bilgileri {session_path} dosyasına kaydedildi.")
-                print("Bundan sonraki oturumlarda tekrar giriş yapmanız gerekmeyecek.")
+                await asyncio.wait_for(client.send_code_request(phone), timeout=30.0)
+                code = input("Telegram'dan aldığınız kodu girin: ")
+                
+                try:
+                    await asyncio.wait_for(client.sign_in(phone, code), timeout=30.0)
+                    print(f"Giriş başarılı! Oturum bilgileri {session_path} dosyasına kaydedildi.")
+                    print("Bundan sonraki oturumlarda tekrar giriş yapmanız gerekmeyecek.")
+                except SessionPasswordNeededError:
+                    password = input("İki faktörlü kimlik doğrulama şifrenizi girin: ")
+                    await asyncio.wait_for(client.sign_in(password=password), timeout=30.0)
+                    print(f"Giriş başarılı! Oturum bilgileri {session_path} dosyasına kaydedildi.")
+                    print("Bundan sonraki oturumlarda tekrar giriş yapmanız gerekmeyecek.")
+                except asyncio.TimeoutError:
+                    print("Telegram sunucusuna kod gönderirken zaman aşımı. Lütfen daha sonra tekrar deneyin.")
+                    if client and client.is_connected():
+                        await client.disconnect()
+                    return None
+                except Exception as sign_error:
+                    print(f"Giriş sırasında hata: {str(sign_error)}")
+                    if client and client.is_connected():
+                        await client.disconnect()
+                    return None
+            except asyncio.TimeoutError:
+                print("Telegram sunucusuna kod gönderirken zaman aşımı. Lütfen daha sonra tekrar deneyin.")
+                if client and client.is_connected():
+                    await client.disconnect()
+                return None
+            except Exception as sign_error:
+                print(f"Giriş sırasında hata: {str(sign_error)}")
+                if client and client.is_connected():
+                    await client.disconnect()
+                return None
         else:
-            me = await client.get_me()
-            print(f"Mevcut oturum kullanılıyor: {me.first_name} (@{me.username})")
+            try:
+                me = await client.get_me()
+                if me:
+                    print(f"Mevcut oturum kullanılıyor: {me.first_name} (@{me.username if hasattr(me, 'username') else 'Bilinmiyor'})")
+                else:
+                    print("Oturum açıldı ancak kullanıcı bilgileri alınamadı")
+            except Exception as me_error:
+                print(f"Kullanıcı bilgileri alınırken hata: {str(me_error)}")
+                # Yine de istemciyi döndür çünkü oturum açılabilmiş
         
         return client
     except Exception as e:
         print(f"Telegram istemcisi başlatma hatası: {str(e)}")
+        import traceback
+        traceback.print_exc()
         # Daha önceden yaratılmış bir istemci var mı kontrol et
-        if 'client' in locals() and isinstance(client, TelegramClient):
+        if 'client' in locals() and isinstance(client, TelegramClient) and client.is_connected():
             return client
         else:
-            raise  # Hatayı tekrar fırlat
+            # Hata durumunda None döndür, böylece program güvenli şekilde devam edebilir
+            return None
 
 # Servis başlatma
 async def start_service(service_name, client, config, db):
@@ -432,9 +491,21 @@ async def main():
         logger.info("Telegram istemcisi başlatılıyor...")
         client = await setup_telegram_client(config)
         
+        # Client objesi oluşturulabildi mi kontrol et
+        if not client:
+            logger.error("Telegram istemcisi başlatılamadı. Uygulama durduruluyor.")
+            return
+        
         # Botun bağlı olduğunu göster
-        me = await client.get_me()
-        logger.info(f"Bağlantı başarılı: {me.first_name} (@{me.username})")
+        try:
+            me = await client.get_me()
+            if me:
+                logger.info(f"Bağlantı başarılı: {me.first_name} (@{me.username if hasattr(me, 'username') else 'Bilinmiyor'})")
+            else:
+                logger.warning("Telegram bağlantısı kuruldu ancak kullanıcı bilgileri alınamadı")
+        except Exception as me_error:
+            logger.error(f"Kullanıcı bilgileri alınırken hata: {str(me_error)}")
+            # İşleme devam etmek için gerekli olmayan bir adım olduğu için uygulamayı durdurmuyoruz
         
         # Bot kontrol durumunu güncelle
         bot_running = True
@@ -542,11 +613,17 @@ async def main():
     finally:
         # Varsa botu durdur ve kaynakları serbest bırak
         try:
-            if 'client' in locals() and hasattr(client, 'disconnect'):
+            if 'client' in locals() and client and hasattr(client, 'disconnect'):
                 logger.info("Telegram istemcisi kapatılıyor...")
-                await client.disconnect()
+                try:
+                    await asyncio.wait_for(client.disconnect(), timeout=5.0)
+                    logger.info("Telegram istemcisi başarıyla kapatıldı")
+                except asyncio.TimeoutError:
+                    logger.warning("Telegram istemcisi kapatılırken zaman aşımı, zorla kapatılıyor")
+                except Exception as disconnect_err:
+                    logger.error(f"İstemci kapatılırken hata: {str(disconnect_err)}")
         except Exception as e:
-            logger.error(f"İstemci kapatılırken hata: {str(e)}")
+            logger.error(f"İstemci kapatılırken genel hata: {str(e)}")
         
         logger.info("Bot kapatıldı.")
 

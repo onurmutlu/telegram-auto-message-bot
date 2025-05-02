@@ -496,6 +496,52 @@ class GroupService(BaseService):
     def set_message_service(self, message_service):
         """Mesaj servisini ayarlar"""
         self.message_service = message_service
+        
+    async def get_target_groups(self):
+        """
+        Hedef grupların listesini döndürür.
+        Grup işleyicisi tarafından kullanılır.
+        
+        Returns:
+            list: Hedef grup listesi
+        """
+        try:
+            groups_list = []
+            
+            # Veritabanı bağlantısını kontrol et
+            if not self.db.connected:
+                await self.db.connect()
+                
+            # Aktif grupları al
+            query = """
+                SELECT group_id, name, member_count, is_active, last_message, join_date
+                FROM groups 
+                WHERE is_active = TRUE
+                ORDER BY member_count DESC
+            """
+            rows = await self.db.fetchall(query)
+            
+            if not rows:
+                logger.warning("Hedef grup bulunamadı.")
+                return []
+            
+            for row in rows:
+                group_id = row[0]
+                groups_list.append({
+                    'group_id': group_id,
+                    'name': row[1],
+                    'member_count': row[2] or 0,
+                    'is_active': bool(row[3]),
+                    'last_message': row[4],
+                    'join_date': row[5]
+                })
+            
+            logger.info(f"{len(groups_list)} hedef grup bulundu.")
+            return groups_list
+            
+        except Exception as e:
+            logger.error(f"Hedef gruplar alınırken hata: {str(e)}")
+            return []
 
     async def discover_groups(self, limit=100, offset_date=None):
         """

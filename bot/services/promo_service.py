@@ -79,6 +79,9 @@ class PromoService(BaseService):
         self.last_sent_times = {}
         # Minimum gönderim aralığı (saniye)
         self.min_send_interval = 360  # 6 dakika
+        
+        # Son güncelleme zamanı için değişken
+        self.last_update = datetime.now()
     
     def _load_settings(self):
         """Tanıtım servisi ayarlarını yükler."""
@@ -251,7 +254,11 @@ class PromoService(BaseService):
         Returns:
             bool: Başarılı ise True
         """
+        # Önce süper sınıfın start metodunu çağır
+        await super().start()
+        
         if self.running:
+            logger.info("Tanıtım servisi zaten çalışıyor")
             return True
             
         self.running = True
@@ -262,6 +269,99 @@ class PromoService(BaseService):
             asyncio.create_task(self._campaign_loop())
         
         return True
+    
+    async def run(self) -> None:
+        """
+        Servisin ana çalışma döngüsü. Bu metot, servis yöneticisi tarafından çağrılır ve otomatik
+        tanıtım mesajlarını ve kampanyaları yürütür.
+        
+        Returns:
+            None
+        """
+        logger.info("PromoService çalışma döngüsü başlatıldı")
+        try:
+            # Önce servisi aktif et
+            if not self.running:
+                await self.start()
+            
+            # Ana döngü
+            while self.running and not self.stop_event.is_set():
+                try:
+                    # Kampanya döngüsü zaten ayrı bir task olduğundan, 
+                    # burada sadece periyodik olarak durumu kontrol ediyoruz
+                    if not self.auto_campaign:
+                        # Otomatik kampanya devre dışı ise, 
+                        # tek seferlik mesaj gönderimlerini kontrol et
+                        await self._check_pending_promos()
+                    
+                    # Kullanıcı segmentlerini periyodik olarak güncelle
+                    if (datetime.now() - self.last_update).total_seconds() > 3600:  # Her saat
+                        logger.info("Kullanıcı segmentleri güncelleniyor...")
+                        await self._prepare_user_segments()
+                        self.last_update = datetime.now()
+                    
+                    # Servisin durumunu kontrol et
+                    # Eğer durdu ise yeniden başlat
+                    if not self.running:
+                        logger.warning("Tanıtım servisi durmuş, yeniden başlatılıyor...")
+                        self.running = True
+                    
+                    # Bekleme süresi
+                    await asyncio.sleep(60)  # 1 dakika bekle
+                    
+                except asyncio.CancelledError:
+                    logger.info("PromoService çalışma döngüsü iptal edildi")
+                    break
+                except Exception as e:
+                    logger.error(f"PromoService döngüsünde hata: {str(e)}")
+                    logger.debug(traceback.format_exc())
+                    await asyncio.sleep(300)  # Hata durumunda 5 dakika bekle
+                    
+        except asyncio.CancelledError:
+            logger.info("PromoService çalışma döngüsü iptal edildi")
+        except Exception as e:
+            logger.error(f"PromoService çalışma döngüsünde kritik hata: {str(e)}")
+            logger.debug(traceback.format_exc())
+        finally:
+            # Servis düzgün kapanıyor mu kontrol et
+            if not self.stop_event.is_set():
+                logger.warning("PromoService çalışma döngüsü beklenmedik şekilde sonlandı, yeniden başlatılıyor...")
+                asyncio.create_task(self.start())
+            else:
+                logger.info("PromoService çalışma döngüsü tamamlandı")
+    
+    async def _check_pending_promos(self) -> None:
+        """
+        Bekleyen tanıtım mesajlarını kontrol eder ve gönderir.
+        """
+        try:
+            # Veritabanından bekleyen tanıtım mesajlarını al
+            if hasattr(self.db, 'get_pending_promos'):
+                pending_promos = await self._run_async_db_method(self.db.get_pending_promos)
+                if pending_promos:
+                    logger.info(f"{len(pending_promos)} bekleyen tanıtım mesajı bulundu")
+                    for promo in pending_promos:
+                        # Her bir tanıtım mesajını işle
+                        try:
+                            user_id = promo.get('user_id')
+                            template = promo.get('template')
+                            
+                            if user_id and template:
+                                # DM servisini kullanarak gönder
+                                if self.services.get('dm'):
+                                    user_data = await self._run_async_db_method(self.db.get_user, user_id)
+                                    if user_data:
+                                        await self.services['dm']._send_promo_to_user(user_data, template)
+                                        # Veritabanını güncelle
+                                        await self._run_async_db_method(
+                                            self.db.mark_promo_sent, 
+                                            user_id, 
+                                            promo.get('id', 'manual')
+                                        )
+                        except Exception as e:
+                            logger.error(f"Tanıtım mesajı işlenirken hata: {str(e)}")
+        except Exception as e:
+            logger.error(f"Bekleyen tanıtımlar kontrol edilirken hata: {str(e)}")
     
     async def stop(self) -> None:
         """
