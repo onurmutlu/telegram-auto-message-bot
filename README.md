@@ -1,378 +1,213 @@
-# MVP SaaS Çözümü: Telegram Marketing Suite
+# Telegram Bot Platform
 
-## 📢 Yeni: SaaS Çözümü Artık Hazır!
+Modern Telegram bot platformu - grup yönetimi, analitik ve otomatik mesajlaşma özellikleri
 
-Telegram Marketing Suite artık çoklu hesap desteğiyle SaaS (Software as a Service) modelinde sizlere sunuluyor! Her müşteriye özel ayarlanmış, izole bir ortamda çalışan, hızlı kuruluma sahip çözümümüzle tanışın.
+## Genel Bakış
 
-### 🚀 SaaS Avantajları
+Bu proje, çeşitli servisleri ve araçları içeren kapsamlı bir Telegram bot platformudur. Bot, grup yönetimi, kullanıcı takibi, otomatik mesajlaşma ve analitik gibi özelliklere sahiptir.
 
-- **Hızlı Başlangıç**: 5 dakika içinde kurulum ve kullanıma hazır
-- **Çoklu Hesap**: Tek pakette 3 farklı Telegram hesabı desteği
-- **İzole Ortam**: Her müşteri için ayrı Docker container ve veritabanı
-- **Aylık Abonelik**: Yüksek ilk yatırım maliyeti olmadan başlayın
-- **7/24 Destek**: Teknik ekibimizden sürekli destek
+## Mevcut Sürüm
 
-### 📋 Kullanım Senaryoları
+### 3.9.0 - Servis Mimarisi ve Güvenilirlik Geliştirmeleri
 
-1. **Pazarlama Ekipleri**: Telegram gruplarında markanızı tanıtın
-2. **Topluluk Yöneticileri**: Binlerce kullanıcıyla etkileşimde kalın
-3. **E-ticaret İşletmeleri**: Ürünlerinizi doğrudan potansiyel müşterilere tanıtın
-4. **İçerik Üreticileri**: İçeriklerinizi daha geniş kitlelere ulaştırın
-5. **Affiliate Pazarlamacıları**: Komisyon bazlı ürünlerin tanıtımını yapın
+Platformun daha modüler ve dayanıklı hale getirilmesine odaklanan 3.9.0 sürümündeki gelişmeler:
 
-### 🛠️ Teknik Mimari
+#### Asenkron Veritabanı Bağlantı Havuzu
+Veritabanı bağlantıları asyncpg kullanılarak optimize edilmiş (`app/db/async_connection_pool.py`):
+- Otomatik bağlantı havuzu yönetimi
+- Asenkron transaction desteği
+- Parametre önbellekleme ve hazırlanmış sorgu optimizasyonları
+- Bağlantı timeout ve retry mekanizmaları
 
-Telegram Marketing Suite, modüler bir servis mimarisi üzerine kurulmuştur:
+#### Gelişmiş Hata Yönetimi
+Merkezi hata yakalama ve izleme sistemi (`app/services/error_handling/`):
+- ErrorManager ile merkezi hata yönetimi
+- Retry stratejileri (linear, exponential, random)
+- Circuit Breaker deseni ile hata durumlarında otomatik devre kesme
+- Yapılandırılabilir hata sınıfları ve kategorilendirme
 
-- **UserService**: Kullanıcı yönetimi ve veritabanı işlemleri
-- **GroupService**: Grup mesajlaşma ve yönetim
-- **DirectMessageService**: Özel mesajlaşma ve otomatik yanıtlar
-- **InviteService**: Kullanıcılara grup davetleri gönderme
-- **AnnouncementService**: Gruplarda duyuru ve tanıtım mesajları
-- **MessageService**: Merkezi mesaj gönderim servisi
-- **PromoService**: Tanıtım kampanyaları yönetimi
-- **GptService**: Yapay zeka entegrasyonu
-- **AnalyticsService**: Detaylı grup ve kullanıcı etkileşim analizi (YENİ)
-- **ErrorService**: Kategori bazlı hata izleme ve raporlama (YENİ)
+#### Servis Sağlığı İzleme
+Prometheus ve Grafana entegrasyonu ile gerçek zamanlı servis sağlığı izleme (`app/services/monitoring/health_monitor.py`):
+- Servis durumu izleme ve raporlama
+- REST API üzerinden sağlık bilgilerine erişim
+- Metrik toplama ve tarihsel veri kaydı
+- Kritik servisler için uyarı mekanizması
 
-Tüm servisler, merkezi bir ServiceManager tarafından koordine edilmekte ve PostgreSQL veritabanı desteğiyle çalışmaktadır.
+#### Modüler Servis Mimarisi
+Servis mimarisi tamamen yeniden düzenlenmiş, her bir servis birbirinden bağımsız çalışabilir hale getirilmiştir:
+- ServiceFactory ile dinamik servis yönetimi
+- Servisler arası bağımlılıkların azaltılması
+- Servis başlangıç sırasının optimizasyonu
+- Demo servis ile yeni özelliklerin örnek uygulaması
 
-### 💼 Paketler ve Fiyatlandırma
+## Gelecek Sürüm
 
-| Özellik | Başlangıç | Profesyonel | Kurumsal |
-|---------|-----------|-------------|----------|
-| Hesap Sayısı | 1 | 2 | 3 |
-| Aylık Mesaj Limiti | 10,000 | 50,000 | Sınırsız |
-| Grup Sayısı | 20 | 100 | Sınırsız |
-| Özel Şablonlar | 5 | 20 | Sınırsız |
-| Analitik | Temel | Gelişmiş | Premium |
-| Öncelikli Destek | ❌ | ✅ | ✅ |
-| Özel Geliştirmeler | ❌ | ❌ | ✅ |
-| **Aylık Fiyat** | **₺499** | **₺999** | **₺1999** |
+### 4.0.0 - Mikro Servis Mimarisi
 
-### 🛒 Hemen Başlamak İçin
+4.0.0 sürümü, platformun tamamen mikro servis mimarisine geçişini kapsamaktadır:
 
-1. [satış@siyahkare.com](mailto:satış@siyahkare.com) adresine mail atın
-2. Size özel oluşturulan Docker kurulum dosyalarını alın
-3. Kurulum kılavuzunu takip ederek 5 dakikada sistemi kurun
-4. Hesap bilgilerinizi girerek hemen kullanmaya başlayın
+- **Mikro Servis Dönüşümü**: Monolitik yapıdan bulut tabanlı mikro servislere geçiş.
+- **Asenkron Mesaj Kuyrukları**: RabbitMQ veya Kafka ile servisler arası iletişim.
+- **Konteyner Orkestrasyonu**: Docker ve Kubernetes ile servis yönetimi.
+- **Yeni Kullanıcı Arayüzü**: Tamamen yeniden tasarlanmış web tabanlı yönetim paneli.
+- **Gelişmiş Analitik**: ELK Stack ve veri ambarı ile kapsamlı analitik ve raporlama yetenekleri.
 
-### 🔜 Yakında Gelecek Özellikler (v4.0)
+Detaylı sürüm notları ve planlar için [CHANGELOG.md](CHANGELOG.md) ve [ROADMAP.md](ROADMAP.md) dosyalarını inceleyebilirsiniz.
 
-- **Yapay Zeka Asistanı**: GPT ile otomatik mesaj üretimi ve analizi
-- **Tam Otomatik Satış**: Kullanıcılarla etkileşime geçen satış botları
-- **İleri Analitik**: Detaylı kullanıcı davranışı ve grup analizi
-- **Web Arayüzü**: Tarayıcı üzerinden tüm sistemi yönetme
+## Klasör Yapısı
 
-### 📦 Sistem Gereksinimleri
-
-- Docker ve Docker Compose
-- 2GB RAM (minimum)
-- 20GB Disk Alanı
-- Internet Bağlantısı
-- PostgreSQL 13+
-
-## Veritabanı Optimizasyon ve Performans İyileştirmeleri
-
-Telegram botundaki veritabanı performansını artırmak ve PostgreSQL geçişini tamamlamak için bir dizi iyileştirme yapılmıştır:
-
-### PostgreSQL Bağlantı Yönetimi
-- **Connection Pooling**: Bağlantı havuzu ile çoklu bağlantı yönetimi ve kaynakların verimli kullanımı sağlandı.
-- **SQLAlchemy Entegrasyonu**: Hem senkron hem asenkron SQLAlchemy desteği ile ORM kullanımı.
-- **Transaction Yönetimi**: İşlem bütünlüğünü korumak için gelişmiş transaction mekanizmaları.
-
-### Veritabanı Şema İyileştirmeleri
-- **BigInteger Dönüşümü**: Telegram ID'lerinin taşması sorununu çözmek için tüm ID alanları BigInteger'a dönüştürüldü.
-- **Unique Constraint'ler**: Veri bütünlüğünü korumak için gerekli kısıtlamaların eklenmesi.
-- **İndeksleme Stratejisi**: Performansı artırmak için özelleştirilmiş indeksler ve kompozit indeksler oluşturuldu.
-
-### Servis Mimarisi İyileştirmeleri
-- **Event-Tabanlı Mimari**: Servisler arası iletişim için EventService ve EventBus eklendi.
-- **Servis Bağımlılık Yönetimi**: Servislerin bağımlılıklarını ve çalışma sırasını yöneten ServiceManager.
-- **Servis Yaşam Döngüsü**: Servis başlatma, durdurma ve hata durumları için kapsamlı yönetim.
-
-### Veritabanı Bakım ve İzleme
-- **optimize_database.py**: Veritabanını optimize etmek için özel bakım betiği.
-- **Performans İzleme**: Yavaş sorguları tespit etme ve indeks kullanımını analiz etme araçları.
-- **Düzenli Bakım**: VACUUM, ANALYZE ve REINDEX işlemleri için otomatik betikler.
-
-## Grup Analitik Sistemi (YENİ)
-
-v3.6.0 ile eklenen Grup Analitik Sistemi, Telegram gruplarınızdaki aktiviteleri derinlemesine izlemenizi ve anlamanızı sağlar. Bu sistem, pazarlama stratejilerinizi veri odaklı yönlendirmenize ve grup performansını artırmanıza yardımcı olur.
-
-### Temel Analitik Özellikleri
-- **Grup Performans Metrikleri**: Mesaj sayısı, üye sayısı, aktif kullanıcı sayısı, etkileşim oranı, büyüme oranı
-- **Trend Analizi**: Grupların zaman içindeki performans değişimlerini gösteren grafik verileri
-- **Top Listeler**: En aktif gruplar, en hızlı büyüyen gruplar, en yüksek etkileşimli gruplar
-- **İnaktif Grup Tespiti**: Belirli bir süre boyunca düşük aktivite gösteren grupları belirleme
-
-### Kullanıcı Analizi
-- **En Aktif Kullanıcılar**: Gruplarda en çok mesaj gönderen ve etkileşimde bulunan kullanıcılar
-- **Kullanıcı Etkileşim Profilleri**: Kullanıcıların hangi gruplarda, ne zaman, hangi içerik türleriyle etkileşime girdiği
-- **Katılım ve Ayrılma Analizi**: Kullanıcıların gruplara katılma ve ayrılma desenlerinin analizi
-
-### Raporlama ve Dışa Aktarım
-- **Haftalık Grup Raporları**: Her grup için veya tüm gruplar için otomatik, detaylı haftalık raporlar
-- **CSV ve JSON Dışa Aktarım**: Analitik verilerinin CSV ve JSON formatlarında dışa aktarımı
-- **Mesaj Türü Analizi**: Metin, medya, bağlantı gibi farklı mesaj türlerinin dağılımı
-- **Zamansal Analiz**: Günün saati ve haftanın günü bazında etkileşim yoğunluğu
-
-### Kullanım Örnekleri
-
-Grup analitik verileri almak için:
-```python
-from bot.services.analytics_service import AnalyticsService
-
-# Analitik servisi örneği oluştur
-analytics_service = AnalyticsService()
-
-# Belirli bir grup için analitik verilerini al
-group_analytics = await analytics_service.get_group_analytics(group_id=123456789, days=30)
-
-# En aktif grupları listele
-top_active_groups = await analytics_service.get_top_active_groups(limit=10)
-
-# En aktif kullanıcıları bul
-active_users = await analytics_service.get_most_interactive_users(group_id=123456789, limit=20)
-
-# Grup aktivite trendlerini analiz et
-trends = await analytics_service.get_group_activity_trends(group_id=123456789, days=60)
-
-# Haftalık rapor oluştur
-weekly_report = await analytics_service.generate_weekly_report(group_id=123456789)
-
-# Analitik verilerini dışa aktar
-export_file = await analytics_service.export_analytics(group_id=123456789, format="json")
+```
+app/
+├── api/            # FastAPI API 
+├── core/           # Çekirdek bileşenler
+│   └── tdlib/      # TDLib entegrasyonu
+├── db/             # Veritabanı bağlantıları ve migrationlar
+├── maintenance/    # Bakım ve düzeltme betikleri
+├── models/         # SQLModel modelleri
+├── services/       # Bot servisleri
+│   ├── analytics/  # Analitik servisleri
+│   ├── monitoring/ # İzleme servisleri
+│   ├── error_handling/ # Hata yönetimi
+│   └── messaging/  # Mesajlaşma servisleri
+├── sessions/       # Telegram oturum dosyaları
+├── tests/          # Test dosyaları
+├── utils/          # Yardımcı fonksiyonlar
+│   └── dashboard/  # Dashboard araçları
+├── client.py       # Client entry point
+├── scheduler.py    # Zamanlayıcı entry point
+└── main.py         # Ana entry point
 ```
 
-## Gelişmiş Hata İzleme Sistemi (YENİ)
+## Servisler
 
-v3.6.0 ile eklenen Gelişmiş Hata İzleme Sistemi, uygulamanın daha stabil çalışmasını sağlayacak, sorunları daha hızlı tespit etmenize ve çözmenize yardımcı olacak bir altyapı sunmaktadır.
+Platform aşağıdaki servisleri içerir:
 
-### Kategori Bazlı Hata Sınıflandırma
-- **Veritabanı Hataları**: SQL, bağlantı, transaction vb. hatalar
-- **Telegram API Hataları**: API limitleri, flood wait, yetkilendirme sorunları
-- **Ağ Hataları**: Bağlantı zaman aşımı, socket problemleri
-- **Genel Hatalar**: Diğer tüm uygulama hataları
+- **BaseService**: Tüm servisler için temel sınıf
+- **UserService**: Kullanıcı yönetimi ve takibi
+- **GroupService**: Grup yönetimi ve izleme
+- **MessageService**: Genel mesajlaşma işlevleri
+- **AnnouncementService**: Grup duyuruları
+- **DirectMessageService**: Kullanıcılara özel mesajlar
+- **ReplyService**: Otomatik yanıtlar
+- **InviteService**: Davet yönetimi
+- **PromoService**: Promosyon mesajları
+- **AnalyticsService**: Kullanım analizi
+- **DataMiningService**: Veri madenciliği ve analizler
+- **ErrorService**: Hata takibi ve raporlama
+- **HealthMonitor**: Servis sağlığı izleme
+- **DemoService**: Test ve örnek uygulama servisi
+- **GPTService**: AI tabanlı yanıtlar
 
-### Gelişmiş İzleme ve Raporlama
-- **Otomatik Kategorizasyon**: Hata mesajlarını ve yığın izlerini analiz ederek otomatik sınıflandırma
-- **Kategori Bazlı Eşikler**: Her hata kategorisi için farklı izleme eşikleri ve süreleri
-- **Gelişmiş Kayıt Tutma**: Kategoriye göre ayrılmış log dosyaları ve detaylı JSON formatında kayıt
-- **Çözüm Takibi**: Hataların çözüm durumlarını izleme ve raporlama
+## Bakım Araçları
 
-### Uyarı ve Bildirim Sistemi
-- **Eşik Bazlı Uyarılar**: Belirli bir sürede çok fazla hata oluştuğunda otomatik uyarılar
-- **Kategori Özelinde Bildirimler**: Hata kategorisine göre özelleştirilmiş bildirimler
-- **Periyodik Raporlar**: Hata eğilimleri ve sorun noktaları hakkında otomatik raporlar
+Platformun bakımı için çeşitli araçlar bulunmaktadır:
 
-### İstatistik ve Analiz
-- **Hata Eğilimleri**: Zaman içindeki hata dağılımlarını ve eğilimlerini analiz etme
-- **Kategori İstatistikleri**: Kategori, şiddet ve kaynağa göre hata analizleri
-- **Etki Analizi**: Hataların kullanıcı deneyimine etkisini ölçme
-
-### Kullanım Örnekleri
-
-Hata izleme sistemi kullanımı:
-```python
-from bot.services.error_service import ErrorService
-
-# Hata izleme servisi örneği oluştur
-error_service = ErrorService()
-
-# Bir hatayı kaydet
-error_id = await error_service.log_error(
-    error_type="ConnectionError",
-    message="Veritabanına bağlanılamadı",
-    source="database_service",
-    severity="ERROR",
-    # Kategori belirtmezseniz otomatik tespit edilir
-)
-
-# Kategori bazlı hata istatistiklerini al
-stats = await error_service.get_category_stats(hours=24)
-
-# Belirli bir kategorideki hataları listele
-db_errors = await error_service.get_errors_by_category(
-    category="DATABASE",
-    include_resolved=False,
-    limit=50
-)
-
-# Bir hatayı çözüldü olarak işaretle
-await error_service.resolve_error(
-    error_id=12345,
-    resolution_info="Veritabanı bağlantı havuzu genişletildi"
-)
-```
-
-### Veritabanı Optimizasyon ve Performans İyileştirmeleri Kullanım Örnekleri
-
-Veritabanı optimizasyonu için:
-```bash
-# Basit optimizasyon (ANALYZE)
-python optimize_database.py --analyze-only
-
-# Tam optimizasyon (VACUUM, REINDEX, ANALYZE)
-python optimize_database.py --vacuum-full --reindex-all
-
-# BigInt kontrolü ve dönüşümü
-python optimize_database.py --check-bigint
-
-# Veritabanı kısıtlamalarını kontrol et
-python optimize_database.py --add-constraints
-```
-
-PostgreSQL bağlantı havuzu kullanımı:
-```python
-from database.db_connection import get_db_pool
-
-# Bağlantı havuzunu al
-db_pool = get_db_pool(min_connections=5, max_connections=20)
-
-# SQL sorgusu çalıştır
-result = db_pool.execute("SELECT * FROM users WHERE is_active = %s", (True,), fetchall=True)
-
-# SQLAlchemy session kullan
-with db_pool.get_session() as session:
-    users = session.query(User).filter(User.is_active == True).all()
-```
-
-Event-tabanlı mimari kullanımı:
-```python
-from bot.services.event_service import EventService, on_event
-
-# Event dinleyici
-@on_event("user_joined", service_name="user_service")
-async def handle_user_joined(self, event):
-    user_data = event.data
-    # Kullanıcı işlemlerini gerçekleştir
-    
-# Event yayınlama
-await event_service.emit("message_received", 
-                        data={"user_id": user_id, "message": message},
-                        source="message_service")
-```
-
-# Telegram Bot v3.6.0
-
-## Yeni Özellikler (v3.6.0)
-
-### Grup Analitik Sistemi
-
-Bu sürümle birlikte kapsamlı bir grup analitik sistemi eklenmiştir. Bu sistem sayesinde:
-
-- Grup aktivite ve etkileşim metrikleri (mesaj sayısı, üye sayısı, aktif kullanıcılar) takip edilebilir
-- En aktif gruplar, en hızlı büyüyen gruplar ve en etkileşimli gruplar tespit edilebilir
-- Kullanıcı etkileşim analizi ve en aktif kullanıcıları tespit edebilir
-- Haftalık detaylı rapor oluşturabilir ve CSV/JSON formatlarında dışa aktarabilir
-
-### Gelişmiş Hata İzleme Sistemi
-
-Hata izleme ve yönetimi geliştirilerek daha kapsamlı hale getirilmiştir:
-
-- Hataları kategorilere ayıran (DATABASE, NETWORK, TELEGRAM_API, GENERAL) sistem
-- Her kategori için özel eşikler ve izleme pencereleri
-- Kategori bazlı log dosyaları ve JSON formatında detaylı kayıt
-- Otomatik hata kategorizasyonu ve istatistik raporlama özellikleri
-
-### Config Adapter Sistemi
-
-Farklı yapılardaki config nesnelerini uyumlu hale getiren adaptör sistemi eklenmiştir:
-
-- Dict yapısındaki, get_setting metodlu veya get metodlu config nesneleri ile uyumlu
-- İç içe yapıya sahip konfigürasyon değerlerini nokta notasyonu ile çekebilme (örn: 'analytics.update_interval')
-- Config nesnesine bağlı hataların giderilmesi
+- **Veritabanı Düzeltmeleri**: fix_database.py, fix_db_locks.py vb.
+- **Kullanıcı Veri Düzeltmeleri**: fix_user_storage.py, fix_user_ids.py vb.
+- **Grup Verileri Düzeltmeleri**: fix_group_tables.py, fix_groups_table.py vb.
+- **Oturum Düzeltmeleri**: fix_telethon_session.py vb.
 
 ## Kullanım
 
-### Grup Analitikleri
+### Kurulum
 
-Grup analitiklerine klavye komutlarından 'a' tuşu ile erişebilirsiniz. Bu komut size aşağıdaki seçenekleri sunar:
-
-- **Haftalık Rapor:** Son 7 günün grup aktivite raporunu gösterir
-- **En Aktif Gruplar:** En fazla mesaj aktivitesine sahip grupları listeler
-- **Büyüyen Gruplar:** Üye sayısı hızla artan grupları listeler
-- **İnaktif Gruplar:** Aktivitesi düşük olan grupları belirler
-- **CSV/JSON Dışa Aktarma:** Analitik verilerini dışa aktarır
-
-### Hata İzleme ve Yönetimi
-
-Hata izleme sistemine klavye komutlarından 'e' tuşu ile erişebilirsiniz. Bu komut size aşağıdaki seçenekleri sunar:
-
-- **Tüm Hatalar:** Sistemdeki tüm hataları listeler
-- **Kategori Bazlı Hatalar:** Belirli kategorilerdeki hataları görüntüler
-- **Kritik Hatalar:** Yalnızca kritik seviyedeki hataları gösterir
-- **Çözülmemiş Hatalar:** Henüz çözülmemiş olan hataları listeler
-- **Hata İstatistikleri:** Kategori bazlı hata dağılımını gösterir
-
-## Kurulum ve Yapılandırma
-
-### Gereksinimler
-
-- Python 3.9 veya üzeri
-- PostgreSQL veritabanı
-- Telethon kütüphanesi
+```bash
+pip install -r requirements.txt
+```
 
 ### Yapılandırma
 
-Config dosyasına yeni eklenen servisler için ayarları ekleyin:
-
-```json
-{
-  "analytics": {
-    "update_interval": 3600,
-    "max_retained_reports": 30
-  },
-  "error_service": {
-    "max_retained_errors": 1000,
-    "error_log_path": "logs/errors",
-    "notify_critical": true,
-    "notify_error": true,
-    "alert_threshold": 5,
-    "alert_window": 300,
-    "category_thresholds": {
-      "DATABASE": 3, 
-      "TELEGRAM_API": 10,
-      "NETWORK": 5,
-      "GENERAL": 5
-    },
-    "category_windows": {
-      "DATABASE": 600,
-      "TELEGRAM_API": 300,
-      "NETWORK": 300,
-      "GENERAL": 300
-    }
-  }
-}
-```
-
-### Klasör Yapısı
-
-Aşağıdaki klasörlerin mevcut olduğundan emin olun:
+`.env` dosyasında gerekli ayarları yapın:
 
 ```
-logs/
-  errors/
-    database/
-    network/
-    telegram_api/
-    general/
-data/
-  analytics_export/
+# Telegram API Credentials
+API_ID=12345
+API_HASH=your_api_hash
+BOT_TOKEN=your_bot_token
+
+# Database Connection
+DATABASE_URL=postgresql://user:password@localhost:5432/telegram_bot
 ```
 
-## Test
-
-Servisleri test etmek için aşağıdaki komutları kullanabilirsiniz:
+### Çalıştırma
 
 ```bash
-# Config adapter testleri
-python -m unittest test_config_adapter.py
+# Ana bot servisini başlat
+python -m app.main
 
-# Servis testleri
-python test_services_enhanced.py
+# Sadece istemciyi başlat
+python -m app.client
 
-# Entegrasyon testleri
-python integration_test.py
+# Zamanlayıcıyı başlat
+python -m app.scheduler
 ```
+
+## Taşınma Durumu
+
+Bu proje, daha modern ve daha bakımı kolay bir mimari için kod tabanı yeniden yapılandırma sürecinden geçmektedir. Mevcut taşınma durumu:
+
+- ✅ Proje yapısı yeniden düzenlendi
+- ✅ Servis yönetimi mimarisi tamamen yenilendi
+- ✅ Veritabanı modelleri modernize edildi
+- ✅ Docker ve Docker Compose desteği eklendi
+- ✅ CI/CD pipeline güncellendi
+- ✅ Dokümantasyon MkDocs ile iyileştirildi
+- ✅ Veritabanı bağlantı havuzu optimize edildi (v3.9.0)
+- ✅ Servis sağlığı izleme sistemi eklendi (v3.9.0)
+- ✅ Merkezi hata yönetimi ve kurtarma stratejileri eklendi (v3.9.0)
+- 🔄 Unit ve entegrasyon testleri geliştiriliyor
+- 🔄 Web panel entegrasyonu devam ediyor
+
+Detaylı taşınma durumu için [Taşınma Durumu](docs/migration/status.md) sayfasına bakabilirsiniz.
+
+## Bakım İşlemleri
+
+```bash
+# Veritabanı kilitlerini düzelt
+python -m app.maintenance.fix_db_locks --verbose
+
+# Telethon oturum sorunlarını düzelt
+python -m app.maintenance.fix_telethon_session
+
+# Tüm bakım işlemlerini çalıştır
+python -m app.maintenance.database_maintenance --run-all
+```
+
+## Testler
+
+```bash
+# Tüm testleri çalıştır
+pytest app/tests
+
+# Belirli bir test dosyasını çalıştır
+python -m app.tests.test_services
+```
+
+## Dokümantasyon
+
+Tam dokümantasyon için:
+
+```bash
+# MkDocs dokümantasyonunu oluştur
+pip install mkdocs-material
+mkdocs build
+
+# Dokümantasyonu yerel olarak görüntüle
+mkdocs serve
+```
+
+Oluşturulan dokümantasyona `http://localhost:8000` adresinden erişebilirsiniz.
+
+## Katkıda Bulunma
+
+Katkıda bulunmak için lütfen:
+
+1. Repoyu forklayın
+2. Özellik dalınızı oluşturun (`git checkout -b feature/amazing-feature`)
+3. Değişikliklerinizi commit edin (`git commit -m 'Add some amazing feature'`)
+4. Dalınızı push edin (`git push origin feature/amazing-feature`)
+5. Bir Pull Request açın
+
+## Lisans
+
+Bu proje özel lisans altında dağıtılmaktadır - detaylar için LICENSE dosyasına bakın.
