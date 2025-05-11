@@ -9,6 +9,8 @@ __pycache__/
 env/
 venv/
 ENV/
+*venv*/
+*venv*_*/
 
 # Veritabanı
 *.db
@@ -38,3 +40,27 @@ data/users.db-shm
 # SQLite WAL dosyaları
 *.db-shm
 *.db-wal
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Backup
+.old_backup/
+*_backup*/
+backup*/
+*backup_*/
+*.bak
+**/backups/*.sql
+
+# Geçici dosyalar
+tmp/
+temp/
+
+# tdlib dosyaları
+tdlib-db/
+
+# Uygulamaya özel
+.bot_initialized
+.bot_pids

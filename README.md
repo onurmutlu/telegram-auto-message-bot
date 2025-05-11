@@ -8,37 +8,37 @@ Bu proje, çeşitli servisleri ve araçları içeren kapsamlı bir Telegram bot 
 
 ## Mevcut Sürüm
 
-### 3.9.0 - Servis Mimarisi ve Güvenilirlik Geliştirmeleri
+### 3.9.5 - Güvenilirlik ve Performans Geliştirmeleri 
 
-Platformun daha modüler ve dayanıklı hale getirilmesine odaklanan 3.9.0 sürümündeki gelişmeler:
+Platformun güvenilirliği ve performansını artırmaya odaklanan 3.9.5 sürümündeki geliştirmeler:
 
-#### Asenkron Veritabanı Bağlantı Havuzu
-Veritabanı bağlantıları asyncpg kullanılarak optimize edilmiş (`app/db/async_connection_pool.py`):
-- Otomatik bağlantı havuzu yönetimi
-- Asenkron transaction desteği
-- Parametre önbellekleme ve hazırlanmış sorgu optimizasyonları
-- Bağlantı timeout ve retry mekanizmaları
+#### Gelişmiş Konfigürasyon Yönetimi
+`app/core/config.py` tamamen yeniden yazıldı:
+- Güvenli çevre değişkeni yükleme sistemi 
+- Yorum ve boşluk temizleme ile daha sağlam yapılandırma
+- Otomatik tip dönüşümleri ve varsayılan değerler
+- Kapsamlı zaman aşımı ve bağlantı ayarları
 
-#### Gelişmiş Hata Yönetimi
-Merkezi hata yakalama ve izleme sistemi (`app/services/error_handling/`):
-- ErrorManager ile merkezi hata yönetimi
-- Retry stratejileri (linear, exponential, random)
-- Circuit Breaker deseni ile hata durumlarında otomatik devre kesme
-- Yapılandırılabilir hata sınıfları ve kategorilendirme
+#### Akıllı Mesaj Gönderimi
+FloodWait yönetimi ve gönderim optimizasyonları (`event_listener.py`):
+- Grup yoğunluğuna göre dinamik gecikme stratejisi
+- Grup büyüklüğü ve etkinliğine dayalı önceliklendirme
+- Otomatik hata kurtarma ve yeniden deneme mekanizmaları
+- İstatistiksel analiz ile optimal gönderim zamanları
 
-#### Servis Sağlığı İzleme
-Prometheus ve Grafana entegrasyonu ile gerçek zamanlı servis sağlığı izleme (`app/services/monitoring/health_monitor.py`):
-- Servis durumu izleme ve raporlama
-- REST API üzerinden sağlık bilgilerine erişim
-- Metrik toplama ve tarihsel veri kaydı
-- Kritik servisler için uyarı mekanizması
+#### Veritabanı Hata Düzeltmeleri
+Veritabanı bağlantı sorunları ve tutarlılık hataları giderildi:
+- InFailedSqlTransaction hatalarına karşı koruma
+- Eksik tablo oluşturma ve şema güncelleme araçları
+- Otomatik bağlantı sıfırlama ve kurtarma
+- Transaction izolasyon seviyesi optimizasyonları
 
-#### Modüler Servis Mimarisi
-Servis mimarisi tamamen yeniden düzenlenmiş, her bir servis birbirinden bağımsız çalışabilir hale getirilmiştir:
-- ServiceFactory ile dinamik servis yönetimi
-- Servisler arası bağımlılıkların azaltılması
-- Servis başlangıç sırasının optimizasyonu
-- Demo servis ile yeni özelliklerin örnek uygulaması
+#### Telegram Oturum Yönetimi İyileştirmeleri
+Oturum kararlılığı ve süreklilik sorunları çözüldü:
+- Oturum dosyalarının yedekleme ve kurtarma mekanizmaları
+- Bağlantı yeniden kurma stratejileri
+- API hatalarına karşı akıllı bekleme ve yeniden deneme
+- Çoklu oturum yönetimi geliştirmeleri
 
 ## Gelecek Sürüm
 
@@ -51,6 +51,7 @@ Servis mimarisi tamamen yeniden düzenlenmiş, her bir servis birbirinden bağı
 - **Konteyner Orkestrasyonu**: Docker ve Kubernetes ile servis yönetimi.
 - **Yeni Kullanıcı Arayüzü**: Tamamen yeniden tasarlanmış web tabanlı yönetim paneli.
 - **Gelişmiş Analitik**: ELK Stack ve veri ambarı ile kapsamlı analitik ve raporlama yetenekleri.
+- **Yapay Zeka Entegrasyonu**: OpenAI API entegrasyonu ile akıllı içerik oluşturma ve analiz.
 
 Detaylı sürüm notları ve planlar için [CHANGELOG.md](CHANGELOG.md) ve [ROADMAP.md](ROADMAP.md) dosyalarını inceleyebilirsiniz.
 
@@ -155,8 +156,11 @@ Bu proje, daha modern ve daha bakımı kolay bir mimari için kod tabanı yenide
 - ✅ Veritabanı bağlantı havuzu optimize edildi (v3.9.0)
 - ✅ Servis sağlığı izleme sistemi eklendi (v3.9.0)
 - ✅ Merkezi hata yönetimi ve kurtarma stratejileri eklendi (v3.9.0)
+- ✅ Gelişmiş konfigürasyon yönetimi (v3.9.5)
+- ✅ Akıllı mesaj gönderim sistemi (v3.9.5)
 - 🔄 Unit ve entegrasyon testleri geliştiriliyor
 - 🔄 Web panel entegrasyonu devam ediyor
+- 🔄 Mikro servis mimarisine geçiş hazırlığı devam ediyor
 
 Detaylı taşınma durumu için [Taşınma Durumu](docs/migration/status.md) sayfasına bakabilirsiniz.
 

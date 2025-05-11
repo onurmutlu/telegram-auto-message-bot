@@ -1,1 +1,0 @@
-with open("bot/services/group_service.py", "r") as f: lines = f.readlines(); lines[1235] = "                    except Exception as e:\n"; with open("bot/services/group_service.py", "w") as f: f.writelines(lines)

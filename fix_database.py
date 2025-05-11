@@ -1,174 +1,150 @@
-import psycopg2
-import os
-from urllib.parse import urlparse
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-# .env'den bağlantı bilgilerini al
+"""
+Veritabanı bağlantısı temizleme script'i.
+Bu script, veritabanındaki bozuk/tamamlanmamış işlemleri temizler.
+"""
+
+import os
+import sys
+import psycopg2
+import logging
 from dotenv import load_dotenv
+
+# Loglama yapılandırması
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("fix_database")
+
+# .env dosyasını yükle
 load_dotenv()
 
-db_url = os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/telegram_bot')
-
-# Bağlantı parametrelerini ayrıştır
-url = urlparse(db_url)
-db_name = url.path[1:]  # / işaretini kaldır
-db_user = url.username
-db_password = url.password
-db_host = url.hostname
-db_port = url.port or 5432
-
-print(f'Bağlantı parametreleri: {db_host}:{db_port}/{db_name}')
-
-# Bağlantı kur
-conn = psycopg2.connect(
-    dbname=db_name,
-    user=db_user,
-    password=db_password,
-    host=db_host,
-    port=db_port
-)
-
-cursor = conn.cursor()
-
-# Sorunlu tablolar
-tables_to_fix = [
-    {
-        "name": "messages",
-        "create_sql": """
-        CREATE TABLE IF NOT EXISTS messages (
-            id SERIAL PRIMARY KEY,
-            group_id BIGINT,
-            content TEXT,
-            sent_at TIMESTAMP,
-            status TEXT,
-            error TEXT,
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS idx_messages_group_id ON messages(group_id);
-        """
-    },
-    {
-        "name": "mining_data",
-        "create_sql": """
-        CREATE TABLE IF NOT EXISTS mining_data (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL,
-            username TEXT,
-            first_name TEXT,
-            last_name TEXT,
-            group_id BIGINT,
-            group_name TEXT,
-            message_count INTEGER DEFAULT 0,
-            first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS idx_mining_data_user_id ON mining_data(user_id);
-        CREATE INDEX IF NOT EXISTS idx_mining_data_group_id ON mining_data(group_id);
-        """
-    },
-    {
-        "name": "mining_logs",
-        "create_sql": """
-        CREATE TABLE IF NOT EXISTS mining_logs (
-            id SERIAL PRIMARY KEY,
-            mining_id BIGINT,
-            action_type TEXT,
-            details TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            success BOOLEAN,
-            error TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS idx_mining_logs_mining_id ON mining_logs(mining_id);
-        """
-    }
-]
-
-print("Veritabanı tabloları düzeltiliyor...")
-
-for table in tables_to_fix:
-    table_name = table["name"]
-    create_sql = table["create_sql"]
+def main():
+    """Ana fonksiyon"""
+    logger.info("Veritabanı bağlantısı temizleme aracı başlatılıyor...")
     
-    print(f"\n-- {table_name} tablosu düzeltiliyor --")
+    # Veritabanı bağlantı parametreleri
+    db_host = os.getenv("DB_HOST", "localhost")
+    db_port = os.getenv("DB_PORT", "5432")
+    db_name = os.getenv("DB_NAME", "telegram_bot")
+    db_user = os.getenv("DB_USER", "postgres")
+    db_password = os.getenv("DB_PASSWORD", "postgres")
     
-    # İlgili tabloyu sil (varsa)
     try:
-        cursor.execute(f"DROP TABLE IF EXISTS {table_name} CASCADE")
+        # Veritabanı bağlantısı
+        conn = psycopg2.connect(
+            host=db_host,
+            port=db_port,
+            dbname=db_name,
+            user=db_user,
+            password=db_password
+        )
+        
+        # Otomatik commit'i kapat
+        conn.autocommit = False
+        
+        # Cursor oluştur
+        cur = conn.cursor()
+        
+        logger.info(f"Veritabanına bağlandı: {db_host}:{db_port}/{db_name}")
+        
+        # Aktif bağlantıları listele
+        cur.execute("""
+            SELECT pid, 
+                   usename, 
+                   application_name,
+                   client_addr, 
+                   state, 
+                   query
+            FROM pg_stat_activity 
+            WHERE datname = %s
+        """, (db_name,))
+        
+        connections = cur.fetchall()
+        
+        logger.info(f"Toplam {len(connections)} aktif bağlantı bulundu")
+        
+        # Aktif bağlantıları göster
+        for conn_info in connections:
+            pid, user, app_name, addr, state, query = conn_info
+            logger.info(f"PID: {pid}, User: {user}, App: {app_name}, State: {state}")
+            if query and len(query) > 100:
+                query = query[:100] + "..."
+            logger.info(f"  Query: {query}")
+        
+        # İdleme durumunda kalan işlemleri sonlandır
+        cur.execute("""
+            SELECT pid, 
+                   usename,
+                   state,
+                   age(clock_timestamp(), xact_start) as xact_age
+            FROM pg_stat_activity 
+            WHERE datname = %s
+            AND state = 'idle in transaction'
+            AND age(clock_timestamp(), xact_start) > interval '5 minutes'
+        """, (db_name,))
+        
+        idle_txns = cur.fetchall()
+        
+        if idle_txns:
+            logger.info(f"{len(idle_txns)} uzun süren boşta işlem bulundu")
+            for txn in idle_txns:
+                pid, user, state, age = txn
+                logger.info(f"PID: {pid}, User: {user}, State: {state}, Age: {age}")
+                
+                # İşlemi sonlandır
+                try:
+                    logger.info(f"PID {pid} işlemi sonlandırılıyor...")
+                    cur.execute("SELECT pg_terminate_backend(%s)", (pid,))
+                    logger.info(f"PID {pid} işlemi sonlandırıldı")
+                except Exception as e:
+                    logger.error(f"PID {pid} işlemi sonlandırılırken hata oluştu: {str(e)}")
+        else:
+            logger.info("Boşta kalan işlem bulunamadı")
+        
+        # Toplam bağlantı sayısı
+        cur.execute("""
+            SELECT count(*) FROM pg_stat_activity WHERE datname = %s
+        """, (db_name,))
+        
+        total_conn = cur.fetchone()[0]
+        logger.info(f"Toplam bağlantı sayısı: {total_conn}")
+        
+        # Veritabanı istatistiklerini temizle
+        logger.info("Veritabanı istatistiklerini sıfırlama...")
+        cur.execute("SELECT pg_stat_reset()")
+        
+        # Değişiklikleri kaydet
         conn.commit()
-        print(f"{table_name} tablosu silindi")
+        logger.info("İşlemler başarıyla tamamlandı")
+        
+        # İptal edilen işlemleri sıfırla
+        logger.info("İptal edilmiş işlemleri temizleme...")
+        cur.execute("ROLLBACK")
+        conn.commit()
+        
+        # Tabloların analizini yap
+        logger.info("Tabloların analizi yapılıyor...")
+        # VACUUM transaction içinde çalışamaz, autocommit'i açıyoruz
+        conn.autocommit = True
+        cur.execute("VACUUM ANALYZE")
+        
     except Exception as e:
-        print(f"{table_name} tablosu silinirken hata: {str(e)}")
-        conn.rollback()
+        logger.error(f"Veritabanı işlemi sırasında hata oluştu: {str(e)}", exc_info=True)
+        
+    finally:
+        # Bağlantıyı kapat
+        try:
+            if conn:
+                conn.close()
+                logger.info("Veritabanı bağlantısı kapatıldı")
+        except:
+            pass
     
-    # Tabloyu yeniden oluştur
-    try:
-        cursor.execute(create_sql)
-        conn.commit()
-        print(f"{table_name} tablosu oluşturuldu")
-    except Exception as e:
-        print(f"{table_name} tablosu oluşturulurken hata: {str(e)}")
-        conn.rollback()
+    logger.info("Veritabanı bağlantısı temizleme aracı tamamlandı")
     
-    # Sequence'ı düzelt
-    try:
-        cursor.execute(f"ALTER SEQUENCE {table_name}_id_seq OWNER TO {db_user}")
-        conn.commit()
-        print(f"{table_name}_id_seq sahipliği düzeltildi")
-    except Exception as e:
-        print(f"{table_name}_id_seq sahipliği düzeltilirken hata: {str(e)}")
-        conn.rollback()
-    
-    # Yetkilendirmeleri ayarla
-    try:
-        cursor.execute(f"GRANT ALL PRIVILEGES ON TABLE {table_name} TO {db_user}")
-        cursor.execute(f"GRANT USAGE, SELECT ON SEQUENCE {table_name}_id_seq TO {db_user}")
-        conn.commit()
-        print(f"{table_name} tablosu için yetkiler verildi")
-    except Exception as e:
-        print(f"{table_name} tablosu için yetkilendirme hatası: {str(e)}")
-        conn.rollback()
-
-# Diğer tüm tablolara yetki ver
-cursor.execute("""
-SELECT tablename FROM pg_tables
-WHERE schemaname = 'public'
-""")
-tables = [row[0] for row in cursor.fetchall()]
-
-print("\n-- Tüm tablolara yetki veriliyor --")
-for table in tables:
-    try:
-        cursor.execute(f"GRANT ALL PRIVILEGES ON TABLE {table} TO {db_user}")
-        conn.commit()
-        print(f"{table} tablosu için yetkiler verildi")
-    except Exception as e:
-        print(f"{table} tablosu için yetkilendirme hatası: {str(e)}")
-        conn.rollback()
-
-# Tüm sequence'lara yetki ver
-cursor.execute("""
-SELECT sequence_name FROM information_schema.sequences
-WHERE sequence_schema = 'public'
-""")
-sequences = [row[0] for row in cursor.fetchall()]
-
-print("\n-- Tüm sequence'lara yetki veriliyor --")
-for sequence in sequences:
-    try:
-        cursor.execute(f"GRANT USAGE, SELECT ON SEQUENCE {sequence} TO {db_user}")
-        conn.commit()
-        print(f"{sequence} için yetkiler verildi")
-    except Exception as e:
-        print(f"{sequence} için yetkilendirme hatası: {str(e)}")
-        conn.rollback()
-
-# Bağlantıyı kapat
-cursor.close()
-conn.close()
-
-print("\nVeritabanı düzeltme işlemi tamamlandı.") 
+if __name__ == "__main__":
+    main() 

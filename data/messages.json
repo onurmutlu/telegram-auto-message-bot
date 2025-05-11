@@ -1,92 +1,108 @@
 {
-  "1": {
-    "content": "Selam millet! Bugün nasılsınız bakalım? 😉",
-    "category": "general",
-    "language": "tr"
-  },
-  "2": {
-    "content": "Merhaba! Kimler burada keyifli bir sohbet için hazır? 😊",
-    "category": "general",
-    "language": "tr"
-  },
-  "3": {
-    "content": "Günaydın! Enerjisi yüksek birileri var mı aranızda? 🌟",
-    "category": "morning",
-    "language": "tr"
-  },
-  "4": {
-    "content": "İyi akşamlar! Gününüz nasıl geçti? Anlatmak isteyen var mı? ✨",
-    "category": "evening",
-    "language": "tr"
-  },
-  "5": {
-    "content": "Merhaba! Yeni arkadaşlar edinmeye açık olanlar kimler? 🎭",
-    "category": "social",
-    "language": "tr"
-  },
-  "6": {
-    "content": "İyi geceler! Geceyi daha eğlenceli hale getirecek birileri var mı? 🌙",
-    "category": "night",
-    "language": "tr"
-  },
-  "7": {
-    "content": "Haftaya güzel başlamak isteyenler burada mı? 🦋",
-    "category": "motivation",
-    "language": "tr"
-  },
-  "8": {
-    "content": "Selam! Stres atmak isteyenler kimler? 💫",
-    "category": "general",
-    "language": "tr"
-  },
-  "9": {
-    "content": "Bugün hava nasıl? Dışarı çıkan var mı? 🎡",
-    "category": "casual",
-    "language": "tr"
-  },
-  "10": {
-    "content": "Hafta sonu planı olanlar? Belki ilham alabilirim. 🌺",
-    "category": "weekend",
-    "language": "tr"
-  },
-  "11": {
-    "content": "Güzel bir gün! Keyfi yerinde olanlar kimler? 💖",
-    "category": "general",
-    "language": "tr"
-  },
-  "12": {
-    "content": "İlgi alanlarınız neler? Merak ediyorum. 🎨",
-    "category": "social",
-    "language": "tr"
-  },
-  "13": {
-    "content": "Merhaba! Bugün yeni bir şey öğrenen var mı? ✨",
-    "category": "general",
-    "language": "tr"
-  },
-  "14": {
-    "content": "İyi günler! Yeni insanlarla tanışmak isteyenler? 🌈",
-    "category": "social",
-    "language": "tr"
-  },
-  "15": {
-    "content": "Selam! Motivasyona ihtiyacı olan var mı? 🎈",
-    "category": "motivation",
-    "language": "tr"
-  },
-  "16": {
-    "content": "Günaydın! Kahvesini yudumlayanlar burada mı? 🌸",
-    "category": "morning",
-    "language": "tr"
-  },
-  "17": {
-    "content": "Kimler sohbet etmek istiyor?",
-    "category": "general",
-    "language": "tr"
-  },
-  "18": {
-    "content": "Merhaba millet!",
-    "category": "general",
-    "language": "tr"
-  }
-}
+  "general": [
+    "Merhaba grup üyeleri! Bugün nasılsınız?",
+    "Selam herkese! Grubumuzda aktif bir gün geçirmenizi dileriz.",
+    "Herkese merhabalar! Bugün paylaşacağınız içerikler için şimdiden teşekkürler.",
+    "Grup üyelerimize güzel bir gün diliyoruz! Sorularınız için her zaman buradayız.",
+    "Merhaba! Bugün grubumuza özel bir etkinlik düzenliyoruz, kaçırmayın!"
+  ],
+  "announcement": [
+    "📢 DUYURU: Yeni grup kurallarımızı okumayı unutmayın! Sabit mesajda bulabilirsiniz.",
+    "📢 DUYURU: Grubumuzun yeni yöneticileri atandı. Tebrik ederiz!",
+    "📢 DUYURU: Bu hafta sonu planlanmış bakım çalışması nedeniyle bot 2 saat kadar çevrimdışı olabilir.",
+    "📢 DUYURU: Yeni mesajlaşma özelliklerimiz aktif edildi! Profilinizi güncelleyerek kullanmaya başlayabilirsiniz.",
+    "📢 DUYURU: Grup içi etkinlik yarışmamız başlıyor! Katılım için lütfen formu doldurun."
+  ],
+  "morning": [
+    "Günaydın! Herkese harika bir gün diliyoruz. ☀️",
+    "Günaydın sevgili grup üyeleri! Bugün nasıl başladı?",
+    "Herkese günaydın! Bugün grupta neler paylaşmayı planlıyorsunuz?",
+    "Günaydın! Günün enerjisiyle grubumuzu hareketlendirelim! ⚡",
+    "Günaydın! Kahvenizi alın ve günün ilk mesajlarını kaçırmayın. ☕"
+  ],
+  "evening": [
+    "İyi akşamlar! Günün yorgunluğunu keyifli sohbetlerle atalım. 🌙",
+    "Herkese iyi akşamlar! Bugün neler yaptınız?",
+    "İyi akşamlar grup üyeleri! Gününüz nasıl geçti?",
+    "Akşam sohbetimiz başlıyor! Bugünün konusu: Güncel teknolojik gelişmeler",
+    "İyi akşamlar! Birazdan başlayacak canlı yayınımızı kaçırmayın. 📺"
+  ],
+  "weekend": [
+    "Herkese iyi hafta sonları! Bu hafta sonu için planlarınız neler?",
+    "Hafta sonu başladı! Grubumuzda bugün özel etkinlikler olacak, takipte kalın.",
+    "İyi hafta sonları! Dinlenmeyi unutmayın, pazartesi yine birlikteyiz.",
+    "Hafta sonu için herkese keyifli vakit diliyoruz! Grubumuzdaki özel içerikler için bildirimlerinizi açık tutun.",
+    "Harika bir hafta sonu geçirmenizi dileriz! Bu hafta sonu için özel önerileriniz varsa paylaşabilirsiniz."
+  ],
+  "welcome": [
+    "Aramıza yeni katılan üyelerimiz var! Hepinize hoş geldiniz diyoruz. 👋",
+    "Yeni üyelerimize merhaba! Kendinizi tanıtmak ister misiniz?",
+    "Gruba yeni katılan arkadaşlarımız, hoş geldiniz! Kurallarımızı incelemeyi unutmayın.",
+    "Aramıza katılan yeni üyelerimize sıcak bir merhaba! 🤗",
+    "Yeni üyelerimiz, grubumuza hoş geldiniz! Sorularınız için yöneticilerimize ulaşabilirsiniz."
+  ],
+  "reminder": [
+    "Hatırlatma: Yarın grubumuzda canlı soru-cevap etkinliği olacak, katılımınızı bekliyoruz!",
+    "Hatırlatma: Grup kurallarımıza uygun paylaşımlar yaparak herkese saygılı olmayı unutmayın.",
+    "Hatırlatma: Haftalık anketimize katılmayı unutmayın, fikirleriniz bizim için değerli!",
+    "Hatırlatma: Yarın başlayacak indirim kampanyamızdan haberdar olmak için bildirimlerinizi açık tutun.",
+    "Hatırlatma: Bu hafta içinde yapacağımız çekilişe katılmak için mesajı sabitleyip emoji bırakmanız yeterli!"
+  ],
+  "holiday": [
+    "Bayramınız kutlu olsun! Nice bayramlar geçirmeniz dileğiyle. 🎉",
+    "Yeni yılınız kutlu olsun! 2026'nın herkese sağlık ve mutluluk getirmesini dileriz. 🎄",
+    "Tüm grup üyelerimizin Ramazan Bayramı mübarek olsun! ✨",
+    "Milli bayramımız kutlu olsun! 🇹🇷",
+    "Tatil günü nedeniyle bugün özel içeriklerimizi paylaşacağız, takipte kalın!"
+  ],
+  "question": [
+    "Bugünün sorusu: Şu an okumakta olduğunuz bir kitap var mı? Varsa adını bizimle paylaşır mısınız?",
+    "Gruba soruyoruz: Telegram'ın en sevdiğiniz özelliği nedir?",
+    "Fikrinizi merak ediyoruz: Gelecek hafta hangi konuda içerik görmek istersiniz?",
+    "Günün anketi: Sesli mesaj mı, yazılı mesaj mı? Hangisini tercih edersiniz?",
+    "Sizce yapay zeka uygulamaları hayatımızı nasıl etkileyecek? Düşüncelerinizi paylaşır mısınız?"
+  ],
+  "motivation": [
+    "Başarı, düştükten sonra her seferinde yeniden ayağa kalkmaktır. Motivasyonunuzu yüksek tutun! 💪",
+    "Bugün yeni başlangıçlar için harika bir gün! Neye başlamak istiyorsanız şimdi tam zamanı.",
+    "Hedefe giden yolda küçük adımlar büyük değişimlere yol açar. İlerlemeye devam edin! ✨",
+    "Gelişim kişiseldir, kendi hızınızda ilerleyin. Kendinizi başkalarıyla değil, dünkü halinizle kıyaslayın.",
+    "Her gün yeni bir öğrenme fırsatıdır. Bugün kendiniz için ne öğrendiniz?"
+  ],
+  "tips": [
+    "Bot İpucu: Komutların tam listesini görmek için /help yazabilirsiniz.",
+    "Grup İpucu: Mesajlara uzun basarak birden fazla mesaj seçebilir ve toplu işlem yapabilirsiniz.",
+    "Güvenlik İpucu: Şüpheli bağlantılara tıklamadan önce mutlaka kontrol edin.",
+    "Telegram İpucu: Önemli mesajları kaydedilmiş mesajlara ekleyerek daha sonra kolayca bulabilirsiniz.",
+    "Bot İpucu: Özel komutları denemek için botla direkt mesajlaşabilirsiniz."
+  ],
+  "engage": [
+    "👋 Hey! Grupta kimler aktif? Bir merhaba diyin bakalım! 💬",
+    "😊 Bugün canınız sıkılıyor mu? Benimle sohbet etmek isteyen var mı? DM atabilirsiniz!",
+    "🔥 Grubun en aktif üyesi kim? Cevap veren ilk 3 kişiye özel sürprizlerimiz var! 🎁",
+    "💭 Aklınızda bir soru mu var? Özelden bana sorabilirsiniz, yardımcı olmak için buradayım!",
+    "🌟 Bugün kendini şanslı hisseden var mı? Bana DM atan 10. kişiye özel bir hediye vereceğim!",
+    "📱 Yeni telefon önerileri arayan var mı? Bana özelden yazın, size en iyisini bulalım! 🔍",
+    "🎮 Oyunseverler el kaldırsın! Hangi oyunları oynuyorsunuz? Özelden yazın, önerilerim var!",
+    "☕ Kahve molası zamanı! Kimler müsait sohbet için? Bana DM atın, rahatça konuşalım.",
+    "🎵 Müzik önerisi arayan var mı? En sevdiğiniz şarkıyı yazın veya bana özelden müzik zevkinizden bahsedin!",
+    "🍕 Acıkanlar? Yemek siparişi vermeden önce bana DM atın, indirim kodlarım var!",
+    "💡 Aklında parlak bir fikir mi var? Benimle özel olarak paylaşmak ister misin? DM'lerim açık!",
+    "🎬 Film önerisi isteyen var mı? Tarzını özelden yaz, sana özel liste hazırlayayım!",
+    "📊 Grubumuzun en aktif saatini tahmin edin! Doğru cevabı bilene sürpriz hediyem var 🎁",
+    "🧩 Bugün kafa dağıtmak isteyenler? Özelden yazın, eğlenceli bir aktivite önereyim!",
+    "❓ Grupta cevaplayamadığınız sorular mı var? Bana özelden ulaşın, yardımcı olayım!"
+  ],
+  "dm_invite": [
+    "💬 Sohbet etmek isteyen var mı? Bana DM atabilirsiniz, her konuda konuşabiliriz! 😊",
+    "🤔 Aklınıza takılan bir soru mu var? Bana özelden sorabilirsiniz, memnuniyetle yardımcı olurum!",
+    "👀 Grubun gürültüsünden sıkıldınız mı? Daha sakin bir sohbet için DM'lerim açık!",
+    "🔒 Gizli kalmak istediğiniz konular için bana özelden yazabilirsiniz, gizliliğinize önem veriyorum!",
+    "🎁 Özel indirim kodları ve fırsatlar için bana DM atın! Sadece size özel teklifler sunuyorum!",
+    "🆘 Yardıma mı ihtiyacınız var? Bana özelden ulaşın, sorununuzu çözmek için elimden geleni yapacağım!",
+    "🎯 Hedeflerinize ulaşmak için özel tavsiyelere mi ihtiyacınız var? Bana DM'den detayları anlatın!",
+    "🔍 Bir şey mi arıyorsunuz? Bana özelden yazın, birlikte bulalım!",
+    "📝 Grup hakkında geri bildiriminiz mi var? Bana DM'den iletebilirsiniz, her öneri değerlidir!",
+    "🌟 VIP üyelik hakkında bilgi almak için bana özelden yazın, ayrıcalıklardan yararlanın!"
+  ]
+} 

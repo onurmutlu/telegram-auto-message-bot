@@ -11,6 +11,35 @@ Bu proje [Keep a Changelog](https://keepachangelog.com/tr/1.0.0/) kurallarına u
 - Kubernetes ile ölçeklendirme için Helm chart'ları
 - E2E testler için otomatik Telethon mock'ları
 - OAuth2 yetkilendirme desteği (hazırlık aşamasında)
+- Yapay Zeka entegrasyonu için OpenAI API altyapısı
+
+## [3.9.5] - 2025-05-12
+
+### Mimari Geliştirmeler
+- **Gelişmiş Konfigürasyon Yönetimi**: Daha güvenli ve sağlam çevre değişkeni yönetimi (app/core/config.py)
+- **Akıllı Mesaj Gönderim Stratejisi**: Grup etkinliğine göre dinamik zamanlama ve önceliklendirme
+- **Veritabanı Bağlantı Optimize**: Bağlantı hataları ve transaction sorunları giderildi
+- **Oturum Yönetimi İyileştirmeleri**: Telegram oturum kararlılığı ve sürdürülebilirliği artırıldı
+
+### Eklenenler
+- **fix_database.py**: Veritabanı bağlantı sorunlarını gidermek için bakım aracı
+- **create_analytics_tables.py**: Eksik analitik tablolarını oluşturan yardımcı script
+- **Flood Kontrol İyileştirmeleri**: event_listener.py'de akıllı rate limiting algoritması
+- **Oturum Yöneticisi**: Telegram oturumlarını yönetmek için yeni araçlar
+
+### Geliştirilenler
+- **Config Sınıfı**: Kapsamlı çevre değişkeni doğrulama ve tip dönüşümleri
+- **Mesaj Gönderim Algoritması**: Grup aktivitesine göre akıllı önceliklendirme
+- **Error Handling**: InFailedSqlTransaction hatası için kapsamlı çözüm
+- **Servis Başlatma/Durdurma**: start.sh ve stop.sh betikleri tamamen yenilendi
+- **Telegram Bağlantı Yönetimi**: Bağlantı kesilme ve yeniden bağlanma stratejileri
+
+### Çözülen Sorunlar
+- **InFailedSqlTransaction Hataları**: Uzun süreli veritabanı bağlantılarındaki hatalar giderildi
+- **NoneType has no len()**: Mesaj reaksiyonlarında oluşan tip hataları düzeltildi
+- **ServiceManager Parametre Hatası**: ServiceManager'ın parametre kabul etmemesi sorunu çözüldü
+- **Telegram Oturum Sorunları**: Oturum kayıpları ve bağlantı kopmaları düzeltildi
+- **Flood Wait Hataları**: Aynı gruba çok fazla mesaj gönderme sorunları için akıllı bekleme sistemi
 
 ## [3.9.0] - 2025-04-05
 
