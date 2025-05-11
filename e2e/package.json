@@ -1,0 +1,16 @@
+{
+  "name": "telegram-bot-e2e-tests",
+  "version": "1.0.0",
+  "description": "Telegram Bot Web Panel E2E Testleri",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.42.1",
+    "@types/node": "^20.11.30",
+    "typescript": "^5.4.2"
+  }
+} 

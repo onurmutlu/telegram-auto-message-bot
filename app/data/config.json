@@ -1,0 +1,14 @@
+{
+    "session_file": "session/member_session",
+    "log_file": "logs/bot.log",
+    "log_level": "INFO",
+    "debug_mode": false,
+    "environment": "production",
+    "group_messaging": {
+        "batch_size": 3,
+        "batch_interval": 3,
+        "min_message_interval": 60,
+        "max_retries": 5,
+        "prioritize_active_groups": true
+    }
+}

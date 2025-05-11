@@ -1,0 +1,92 @@
+{
+  "1": {
+    "content": "Merhaba! Size özel grup linklerimizle sohbete katılabilirsiniz: t.me/{}",
+    "category": "general",
+    "type": "template",
+    "language": "tr"
+  },
+  "2": {
+    "content": "Kaliteli bir sohbet arayanlara özel grubumuz açıldı! 👉 t.me/{} 🔥",
+    "category": "general",
+    "type": "template",
+    "language": "tr"
+  },
+  "3": {
+    "content": "Telegram'da en iyi sohbet deneyimi için 👉 t.me/{} katıl!",
+    "category": "general",
+    "type": "template",
+    "language": "tr"
+  },
+  "4": {
+    "content": "Hoş geldin! Telegram yolculuğuna bizim gruplarımızla başlayabilirsin: t.me/{}",
+    "category": "new",
+    "type": "template",
+    "language": "tr"
+  },
+  "5": {
+    "content": "Telegram'a yeni mi katıldın? En iyi deneyim için grubumuz seni bekliyor: t.me/{}",
+    "category": "new",
+    "type": "template",
+    "language": "tr"
+  },
+  "6": {
+    "content": "Aktif kullanıcımız olarak seni premium grubumuza davet etmek istiyoruz: t.me/{}",
+    "category": "active",
+    "type": "template",
+    "language": "tr"
+  },
+  "7": {
+    "content": "Telegram'da sohbeti sevdiğini görüyoruz! Özel VIP grubumuza katılmak ister misin? t.me/{}",
+    "category": "active",
+    "type": "template",
+    "language": "tr"
+  },
+  "8": {
+    "content": "Uzun zamandır görüşemiyoruz! Yeni aktif grubumuz seni bekliyor: t.me/{}",
+    "category": "inactive",
+    "type": "template",
+    "language": "tr"
+  },
+  "9": {
+    "content": "Çok özel kullanıcımız! Premium grup deneyimi için: t.me/{}",
+    "category": "vip",
+    "type": "template",
+    "language": "tr"
+  },
+  "10": {
+    "content": "VIP davet: Sadece seçkin üyeler için oluşturulan grubumuza katılın: t.me/{}",
+    "category": "vip",
+    "type": "template",
+    "language": "tr"
+  },
+  "11": {
+    "content": "🚀 DUYURU: Yeni özelliğimiz aktifleşti! İlk deneyenler arasında ol: t.me/{}",
+    "category": "new_feature",
+    "type": "campaign",
+    "language": "tr"
+  },
+  "12": {
+    "content": "🆕 YENİLİK: Telegram botumuzun son güncellemesi çıktı! Detaylar için: t.me/{}",
+    "category": "new_feature",
+    "type": "campaign",
+    "language": "tr"
+  },
+  "13": {
+    "content": "🔥 FIRSAT: Sınırlı süre için özel teklifimizden yararlanın! t.me/{}",
+    "category": "special_offer",
+    "type": "campaign",
+    "language": "tr"
+  },
+  "14": {
+    "content": "📅 ETKİNLİK: Bu hafta sonu online buluşmamıza davetlisin! Detaylar: t.me/{}",
+    "category": "event",
+    "type": "campaign",
+    "language": "tr"
+  },
+  "15": {
+    "content": "🌞 YAZ KAMPANYASI: Tatil sezonuna özel grup açıldı! t.me/{}",
+    "category": "seasonal",
+    "type": "campaign",
+    "language": "tr"
+  }
+}

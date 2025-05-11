@@ -1,0 +1,21 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Sadece gerekli paketleri yükle
+RUN apt-get update && apt-get install -y libpq-dev && apt-get clean
+
+# Bağımlılıkları yükle
+COPY requirements.txt /app/
+RUN pip install -r requirements.txt
+
+# Kod kopyala
+COPY app/ /app/app/
+COPY alembic.ini /app/
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+
+CMD ["python", "-m", "app.main"]

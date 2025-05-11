@@ -1,0 +1,7 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+CMD ["python", "-c", "import time; print('Bot başarıyla başlatıldı!'); count=0; \
+while True: count+=1; print(f'Bot çalışıyor... {count}'); time.sleep(2);"]
+

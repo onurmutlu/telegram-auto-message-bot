@@ -1,0 +1,74 @@
+{
+  "welcome": [
+    "Merhaba! Botumuzla tanıştığınız için teşekkürler! Size nasıl yardımcı olabilirim?",
+    "Hoş geldiniz! Botumuzla iletişime geçtiğiniz için teşekkür ederiz. Size nasıl yardımcı olabiliriz?",
+    "Merhabalar! Botumuzla iletişime geçtiğiniz için mutluyuz. Size en iyi hizmeti sunmak için buradayız!",
+    "Selam! Botumuzla tanışmak için zaman ayırdığınız için teşekkürler. Size nasıl yardımcı olabiliriz?"
+  ],
+  "promotion": [
+    "Yeni grup özelliklerimizi keşfettin mi? t.me/grup_adi",
+    "Güncel duyurulardan haberdar olmak için t.me/kanal_adi kanalımıza katılabilirsin.",
+    "Botumuzun tüm özelliklerinden yararlanmak için premium üyeliğimizi keşfedin: t.me/premium",
+    "Özel tekliflerimizden haberdar olmak için kanalımıza katılın: t.me/ozel_teklifler",
+    "Size özel indirimler ve fırsatlar için: t.me/firsatlar"
+  ],
+  "reminder": [
+    "Uzun süredir aktif değilsiniz, sizi özledik! Yeni özelliklerimizi incelemek ister misiniz?",
+    "Merhaba! Sizi bir süredir göremiyoruz. Yeni geliştirmelerimizi keşfetmeye ne dersiniz?",
+    "Botumuzda birçok yenilik var! Tekrar hoş geldiniz demeyi çok isteriz.",
+    "Size özlediğimizi söylemek istedik! Botumuzun yeni sürümü artık kullanımda, keşfetmek ister misiniz?"
+  ],
+  "daily_tip": [
+    "Günün İpucu: Botumuzun /help komutunu kullanarak tüm özellikleri keşfedebilirsiniz.",
+    "Günün İpucu: Profil ayarlarınızı güncelleyerek size özel tekliflerden yararlanabilirsiniz.",
+    "Günün İpucu: Arkadaşlarınızı davet ederek bonus puanlar kazanabilirsiniz!",
+    "Günün İpucu: Botumuzun gece modunu aktifleştirerek göz yorgunluğunu azaltabilirsiniz."
+  ],
+  "special_offer": [
+    "🎉 Özel Teklif! Bugüne özel premium üyelik %50 indirimli! Detaylar: t.me/premium_offer",
+    "⚡ Sadece bugüne özel fırsat: Premium özelliklerimize 1 ay ücretsiz erişim! t.me/premium_free",
+    "🔥 Bu fırsatı kaçırmayın! 24 saat içinde kaydolanlara ekstra avantajlar: t.me/special_offer",
+    "💎 VIP üyelerimize özel yeni ayrıcalıklar! Detaylar için: t.me/vip_benefits"
+  ],
+  "feedback_request": [
+    "Hizmetimizi nasıl buluyorsunuz? Geri bildirimleriniz bizim için değerli!",
+    "Botumuzun performansını değerlendirmenizi rica ediyoruz. Nasıl daha iyi olabiliriz?",
+    "Deneyiminizi bizimle paylaşır mısınız? Kısa bir anket için: t.me/feedback_survey",
+    "Hizmetimizi geliştirmemize yardımcı olun! Görüşlerinizi bizimle paylaşın."
+  ],
+  "response_invite": [
+    "Merhaba! İlginiz için teşekkürler. 🙏 Kaliteli içerikler ve güncel bilgiler için şu grubumuza da katılabilirsiniz: t.me/kaliteli_grup 👈",
+    "Mesajınız için teşekkürler! ✨ Sorularınıza daha hızlı yanıt almak için ana kanalımıza katılın: t.me/ana_kanal 📱",
+    "İlgilendiğiniz için teşekkürler! 🌟 Benzer konulara ilgi duyan kişilerle tanışmak için şu gruba göz atın: t.me/community_grup 👥",
+    "Selam! Mesajınızı aldım. 👍 Size özel fırsatlardan haberdar olmak ister misiniz? Bu kanalımıza katılın: t.me/firsatlar_kanali 🎁",
+    "Teşekkürler! 😊 Aradığınız içeriklerin daha fazlasını şu grubumuzda bulabilirsiniz: t.me/premium_content_group 💯"
+  ],
+  "premium_invite": [
+    "🔥 VIP içeriklere erişmek için premium grubumuza katılabilirsiniz: t.me/vip_grup (Aylık sadece 29.90₺) 💎",
+    "⭐ Premium üyelerimize özel avantajlar sunuyoruz! Üyelik için: t.me/premium_uyelik (İlk ay %50 indirimli!) 🎯",
+    "🚀 Gelişmiş özelliklere erişim için premium kanalımıza göz atın: t.me/premium_kanal (Deneme sürümü mevcut!) 🔓",
+    "💯 En kaliteli içeriklere ulaşmak için premium üyelik fırsatını kaçırmayın: t.me/premium_join (Bugüne özel indirim!) 📈",
+    "🌟 Özel içerikler, erken erişim ve dahası... Premium üyelik için: t.me/premium_club (Sınırlı kontenjan!) 💪"
+  ],
+  "personalized_invite": [
+    "İlginizi çekebilecek özel bir etkinliğimiz var! 🎉 Detaylar için grubumuza katılın: t.me/etkinlik_grup ⏰",
+    "Sorduğunuz konu hakkında daha detaylı bilgiler içeren kanalımız: t.me/detayli_bilgi 📚 Mutlaka göz atın!",
+    "Tam da bahsettiğiniz konuda uzmanlaşmış bir topluluğumuz var! 🧠 Katılmak için: t.me/uzman_topluluk 👨‍💻",
+    "İlgi alanlarınıza göre size özel bir grup önerim var: t.me/ozel_grup 🌈 Bu grup tam size göre!",
+    "Bahsettiğiniz konudaki en yeni güncellemeleri paylaştığımız kanal: t.me/guncel_kanal 📱 Kaçırmayın!"
+  ],
+  "follow_up": [
+    "Az önce gönderdiğim grup linkine göz attınız mı? 👀 Orada çok aktif bir topluluk sizi bekliyor! t.me/aktif_topluluk 🔝",
+    "Hatırlatmak istedim - şu grubumuza da katılarak daha fazla fayda sağlayabilirsiniz: t.me/faydali_grup 💡",
+    "Bu arada, bahsettiğim premium kanalımıza katılım için son gün bugün! 🕒 Fırsatı kaçırmayın: t.me/son_firsat 🎯",
+    "Ayrıca bu hafta sonu özel bir etkinliğimiz olacak! 📅 Katılmak için şu kanala göz atın: t.me/haftasonu_etkinlik 🎪",
+    "Unutmadan söyleyeyim, yaklaşan webinarımıza kayıt için: t.me/webinar_kayit 📊 İlk kayıt olanlara özel hediyeler var!"
+  ],
+  "engagement_response": [
+    "Harika bir soru sordunuz! 👏 Bu konuyu derinlemesine tartıştığımız grup için: t.me/derinlemesine_tartisma 🧐",
+    "Çok ilginç bir bakış açısı! 🔍 Bunu diğer üyelerimizle de paylaşmak ister misiniz? t.me/fikir_paylasim_grup 💭",
+    "Tam olarak aradığınız şey için özel bir topluluğumuz var! 🔎 Hemen katılın: t.me/ozel_topluluk 👥",
+    "Bu konu hakkında çok daha fazlası için hazırladığımız kanala göz atabilirsiniz: t.me/detayli_icerik 📑",
+    "Benzer düşünceye sahip kişilerle tanışmak ister misiniz? 🤝 Bu grupta buluşalım: t.me/network_grup 🌐"
+  ]
+} 

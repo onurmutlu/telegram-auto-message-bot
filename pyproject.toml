@@ -1,0 +1,113 @@
+[tool.poetry]
+name = "telegram-bot"
+version = "1.0.0"
+description = "Telegram Bot - Çoklu hesap otomasyonu"
+authors = ["Telegram Bot Team <info@telegram-bot.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.104.1"
+uvicorn = "^0.23.2"
+pyrogram = "^2.0.106"
+tgcrypto = "^1.2.5"
+sqlmodel = "^0.0.8"
+psycopg2-binary = "^2.9.9"
+alembic = "^1.12.1"
+pydantic = {extras = ["email"], version = "^2.4.2"}
+python-dotenv = "^1.0.0"
+python-multipart = "^0.0.6"
+python-jose = {extras = ["cryptography"], version = "^3.3.0"}
+passlib = {extras = ["bcrypt"], version = "^1.7.4"}
+sentry-sdk = {extras = ["fastapi"], version = "^1.37.1"}
+prometheus-client = "^0.18.0"
+structlog = "^23.2.0"
+python-json-logger = "^2.0.7"
+httpx = "^0.25.1"
+apscheduler = "^3.10.4"
+tenacity = "^8.2.3"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+pytest-asyncio = "^0.21.1"
+pytest-cov = "^4.1.0"
+black = "^23.11.0"
+ruff = "^0.1.5"
+mypy = "^1.6.1"
+faker = "^19.13.0"
+types-python-jose = "^3.3.0.2"
+types-passlib = "^1.7.7.13"
+
+[tool.poetry.scripts]
+start-api = "app.api.main:start"
+start-client = "app.client:main"
+start-scheduler = "app.scheduler:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+select = ["E", "F", "B", "I"]
+ignore = []
+fixable = ["A", "B", "C", "D", "E", "F", "I"]
+unfixable = []
+exclude = [
+    ".git",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "build",
+    "dist",
+    "venv",
+]
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["E402", "F401"]
+"app/tests/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+strict_optional = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = "test_*.py" 

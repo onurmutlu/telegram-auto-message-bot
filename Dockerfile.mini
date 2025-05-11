@@ -1,0 +1,27 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Önbelleği azaltmak için
+ENV PIP_NO_CACHE_DIR=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONPATH=/app
+
+# Sadece gerekli paketleri yükle
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libpq-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Önce sadece requirements dosyasını kopyala ve kur (önbellek için)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Gerekli dosyaları kopyala
+COPY app/ ./app/
+COPY alembic.ini ./
+
+EXPOSE 8000
+
+CMD ["python", "-m", "app.main"] 

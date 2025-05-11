@@ -1,0 +1,92 @@
+{
+  "1": {
+    "content": "Selam millet! Bugün nasılsınız bakalım? 😉",
+    "category": "general",
+    "language": "tr"
+  },
+  "2": {
+    "content": "Merhaba! Kimler burada keyifli bir sohbet için hazır? 😊",
+    "category": "general",
+    "language": "tr"
+  },
+  "3": {
+    "content": "Günaydın! Enerjisi yüksek birileri var mı aranızda? 🌟",
+    "category": "morning",
+    "language": "tr"
+  },
+  "4": {
+    "content": "İyi akşamlar! Gününüz nasıl geçti? Anlatmak isteyen var mı? ✨",
+    "category": "evening",
+    "language": "tr"
+  },
+  "5": {
+    "content": "Merhaba! Yeni arkadaşlar edinmeye açık olanlar kimler? 🎭",
+    "category": "social",
+    "language": "tr"
+  },
+  "6": {
+    "content": "İyi geceler! Geceyi daha eğlenceli hale getirecek birileri var mı? 🌙",
+    "category": "night",
+    "language": "tr"
+  },
+  "7": {
+    "content": "Haftaya güzel başlamak isteyenler burada mı? 🦋",
+    "category": "motivation",
+    "language": "tr"
+  },
+  "8": {
+    "content": "Selam! Stres atmak isteyenler kimler? 💫",
+    "category": "general",
+    "language": "tr"
+  },
+  "9": {
+    "content": "Bugün hava nasıl? Dışarı çıkan var mı? 🎡",
+    "category": "casual",
+    "language": "tr"
+  },
+  "10": {
+    "content": "Hafta sonu planı olanlar? Belki ilham alabilirim. 🌺",
+    "category": "weekend",
+    "language": "tr"
+  },
+  "11": {
+    "content": "Güzel bir gün! Keyfi yerinde olanlar kimler? 💖",
+    "category": "general",
+    "language": "tr"
+  },
+  "12": {
+    "content": "İlgi alanlarınız neler? Merak ediyorum. 🎨",
+    "category": "social",
+    "language": "tr"
+  },
+  "13": {
+    "content": "Merhaba! Bugün yeni bir şey öğrenen var mı? ✨",
+    "category": "general",
+    "language": "tr"
+  },
+  "14": {
+    "content": "İyi günler! Yeni insanlarla tanışmak isteyenler? 🌈",
+    "category": "social",
+    "language": "tr"
+  },
+  "15": {
+    "content": "Selam! Motivasyona ihtiyacı olan var mı? 🎈",
+    "category": "motivation",
+    "language": "tr"
+  },
+  "16": {
+    "content": "Günaydın! Kahvesini yudumlayanlar burada mı? 🌸",
+    "category": "morning",
+    "language": "tr"
+  },
+  "17": {
+    "content": "Kimler sohbet etmek istiyor?",
+    "category": "general",
+    "language": "tr"
+  },
+  "18": {
+    "content": "Merhaba millet!",
+    "category": "general",
+    "language": "tr"
+  }
+}

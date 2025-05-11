@@ -1,0 +1,14 @@
+.DS_Store
+.git
+.venv
+__pycache__
+*.pyc
+**/node_modules
+**/.pytest_cache
+.old_backup
+logs/
+.vscode/
+runtime/
+sessions/
+test_run/
+tmp/

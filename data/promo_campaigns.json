@@ -1,0 +1,78 @@
+[
+  {
+    "id": "group_promo_1",
+    "name": "Grup Tanıtım Kampanyası",
+    "description": "Ana Telegram kanalımızın hedef gruplarda tanıtımı",
+    "type": "group_promotion",
+    "status": "active",
+    "start_date": "2025-05-01T00:00:00",
+    "end_date": "2025-06-30T23:59:59",
+    "target_count": 500,
+    "current_count": 0,
+    "target_groups": [
+      -1001234567890,
+      -1001234567891,
+      -1001234567892
+    ],
+    "template_type": "group_promo"
+  },
+  {
+    "id": "service_promo_1",
+    "name": "Premium Hizmet Tanıtımı",
+    "description": "Premium bot özelliklerinin tanıtımı",
+    "type": "service_promotion",
+    "status": "active",
+    "start_date": "2025-05-10T00:00:00",
+    "end_date": "2025-06-10T23:59:59",
+    "target_count": 300,
+    "current_count": 0,
+    "target_groups": [
+      -1001234567893,
+      -1001234567894
+    ],
+    "template_type": "service_promo"
+  },
+  {
+    "id": "dm_campaign_1",
+    "name": "Direkt Mesaj Kampanyası",
+    "description": "Aktif kullanıcılara özel teklif bildirimi",
+    "type": "dm_promotion",
+    "status": "active",
+    "start_date": "2025-05-15T00:00:00",
+    "end_date": "2025-05-25T23:59:59",
+    "target_count": 200,
+    "current_count": 0,
+    "user_segment": "active_30_days",
+    "template_type": "special_offer"
+  },
+  {
+    "id": "event_promo_1",
+    "name": "Webinar Etkinliği Tanıtımı",
+    "description": "Yaklaşan webinar etkinliğimizin duyurusu",
+    "type": "event_promotion",
+    "status": "pending",
+    "start_date": "2025-05-20T00:00:00",
+    "end_date": "2025-05-30T23:59:59",
+    "target_count": 150,
+    "current_count": 0,
+    "target_groups": [
+      -1001234567895,
+      -1001234567896,
+      -1001234567897
+    ],
+    "template_type": "event_promo"
+  },
+  {
+    "id": "retention_campaign_1",
+    "name": "Kullanıcı Geri Kazanım Kampanyası",
+    "description": "30 gündür aktif olmayan kullanıcıları tekrar kazanma çabası",
+    "type": "dm_promotion",
+    "status": "active",
+    "start_date": "2025-05-05T00:00:00",
+    "end_date": "2025-06-05T23:59:59",
+    "target_count": 250,
+    "current_count": 0,
+    "user_segment": "inactive_30_days",
+    "template_type": "reminder"
+  }
+] 

@@ -1,0 +1,42 @@
+{
+  "group_promo": [
+    "Merhaba! Telegram kanalımıza katılın ve en güncel bilgileri alın: t.me/kanal_adi",
+    "Yeni Telegram kanalımız açıldı! İlginizi çekebilecek konularda güncel bilgiler için: t.me/kanal_adi",
+    "Fırsatları kaçırmayın! Telegram kanalımıza katılın: t.me/kanal_adi",
+    "En son gelişmelerden haberdar olmak için Telegram kanalımıza katılabilirsiniz: t.me/kanal_adi",
+    "Sizler için özel içerikler hazırladık! Telegram kanalımıza katılın: t.me/kanal_adi"
+  ],
+  "service_promo": [
+    "Yeni servisimizi denediniz mi? Detaylar için: t.me/servis_adi",
+    "Size özel hizmetlerimiz için: t.me/servis_adi",
+    "Yeni özellikleri keşfedin! Servisimiz artık daha güçlü: t.me/servis_adi",
+    "İhtiyaçlarınıza özel çözümler için servisimizi ziyaret edin: t.me/servis_adi",
+    "Sorunlarınızı çözecek yeni servisimiz hizmetinizde! Detaylar: t.me/servis_adi"
+  ],
+  "event_promo": [
+    "Yaklaşan etkinliğimize davetlisiniz! Detaylar: t.me/etkinlik_adi",
+    "Özel etkinliğimizi kaçırmayın: t.me/etkinlik_adi",
+    "Bu hafta sonu gerçekleşecek etkinliğimize katılın: t.me/etkinlik_adi",
+    "Sektörün önde gelen isimleriyle buluşma fırsatı! Etkinlik detayları: t.me/etkinlik_adi",
+    "Etkinliğimizde yerinizi şimdiden ayırtın, kontenjan sınırlı! t.me/etkinlik_adi"
+  ],
+  "dm_welcome": [
+    "Merhaba! Botumuzla tanıştığınız için teşekkürler! Size nasıl yardımcı olabilirim?",
+    "Hoş geldiniz! Botumuzla iletişime geçtiğiniz için teşekkür ederiz. Size nasıl yardımcı olabiliriz?",
+    "Merhabalar! Botumuzla iletişime geçtiğiniz için mutluyuz. Size en iyi hizmeti sunmak için buradayız!",
+    "Selam! Botumuzla tanışmak için zaman ayırdığınız için teşekkürler. Size nasıl yardımcı olabiliriz?"
+  ],
+  "dm_promotion": [
+    "Yeni grup özelliklerimizi keşfettin mi? t.me/grup_adi",
+    "Güncel duyurulardan haberdar olmak için t.me/kanal_adi kanalımıza katılabilirsin.",
+    "Botumuzun tüm özelliklerinden yararlanmak için premium üyeliğimizi keşfedin: t.me/premium",
+    "Özel tekliflerimizden haberdar olmak için kanalımıza katılın: t.me/ozel_teklifler",
+    "Size özel indirimler ve fırsatlar için: t.me/firsatlar"
+  ],
+  "dm_reminder": [
+    "Uzun süredir aktif değilsiniz, sizi özledik! Yeni özelliklerimizi incelemek ister misiniz?",
+    "Merhaba! Sizi bir süredir göremiyoruz. Yeni geliştirmelerimizi keşfetmeye ne dersiniz?",
+    "Botumuzda birçok yenilik var! Tekrar hoş geldiniz demeyi çok isteriz.",
+    "Size özlediğimizi söylemek istedik! Botumuzun yeni sürümü artık kullanımda, keşfetmek ister misiniz?"
+  ]
+} 

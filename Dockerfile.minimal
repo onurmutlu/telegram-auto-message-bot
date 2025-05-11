@@ -1,0 +1,16 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1
+
+# En temel gerekli paketleri yükle 
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libpq-dev && \
+    apt-get clean
+
+# Test amaçlı basit bir uygulama
+COPY app/main.py ./main.py
+COPY app/core ./core
+
+CMD ["python", "main.py"] 

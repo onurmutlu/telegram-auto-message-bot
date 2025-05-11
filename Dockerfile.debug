@@ -1,0 +1,33 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Sadece gerekli paketleri yükle
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bağımlılıkları önce kopyala ve yükle
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Uygulama dosyalarını kopyala
+COPY app /app/app
+COPY alembic.ini /app/
+
+# Çalışma dizinleri
+RUN mkdir -p /app/runtime/database /app/runtime/logs /app/runtime/sessions
+
+# Ortam değişkenleri
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+
+# Sağlık kontrolü
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+
+CMD ["python", "-m", "app.main"]

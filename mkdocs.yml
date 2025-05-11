@@ -1,0 +1,102 @@
+site_name: Telegram Bot Dokümantasyonu
+site_description: Telegram Bot çoklu hesap otomasyonu için kapsamlı dokümantasyon
+site_author: Telegram Bot Team
+site_url: https://docs.telegram-bot.com
+
+repo_name: telegram-bot
+repo_url: https://github.com/username/telegram-bot
+edit_uri: edit/main/docs/
+
+# Copyright
+copyright: Copyright &copy; 2025 Telegram Bot Team
+
+# İçerik
+docs_dir: docs
+site_dir: site
+
+# Tema
+theme:
+  name: material
+  language: tr
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Koyu temaya geç
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Açık temaya geç
+  font:
+    text: Roboto
+    code: Roboto Mono
+  icon:
+    repo: fontawesome/brands/github
+
+# Markdown uzantıları
+markdown_extensions:
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - pymdownx.critic
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:materialx.emoji.twemoji
+      emoji_generator: !!python/name:materialx.emoji.to_svg
+  - admonition
+  - toc:
+      permalink: true
+
+# Plugins
+plugins:
+  - search
+  - minify:
+      minify_html: true
+      minify_js: true
+      minify_css: true
+
+# Sayfa yapılandırması
+nav:
+  - Ana Sayfa: index.md
+  - Kurulum:
+    - Başlangıç: kurulum/baslangic.md
+    - Gereksinimler: kurulum/gereksinimler.md
+    - Docker Kurulumu: kurulum/docker.md
+    - Ortam Değişkenleri: kurulum/env.md
+  - Kullanım:
+    - Temel Kullanım: kullanim/temel.md
+    - Telegram Entegrasyonu: kullanim/telegram.md
+    - Servis Yönetimi: kullanim/servisler.md
+    - CLI Arayüzü: kullanim/cli.md
+  - API:
+    - Genel Bakış: api/genel-bakis.md
+    - Endpoint Listesi: api/endpointler.md
+    - Kimlik Doğrulama: api/auth.md
+  - Geliştirme:
+    - Katkıda Bulunma: gelistirme/katkida-bulunma.md
+    - Kod Stili: gelistirme/kod-stili.md
+    - Testler: gelistirme/testler.md
+    - CI/CD: gelistirme/cicd.md
+  - Taşınma:
+    - Taşınma Rehberi: migration/index.md
+    - Taşınma Durumu: migration/status.md
+  - Sorun Giderme:
+    - SSS: sorun-giderme/sss.md
+    - Bilinen Sorunlar: sorun-giderme/bilinen-sorunlar.md
+  - Referans:
+    - Yapılandırma: referans/yapilandirma.md
+    - Veri Modelleri: referans/models.md 

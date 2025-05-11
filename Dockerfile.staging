@@ -1,0 +1,60 @@
+FROM python:3.10-slim-bullseye
+
+LABEL maintainer="Telegram Bot <info@telegram-bot.com>"
+LABEL description="Telegram Bot Multi-Account Container - Staging"
+
+# Çalışma dizini oluşturma
+WORKDIR /app
+
+# Timezone ayarları ve gerekli çalışma zamanı kütüphaneleri
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    libpq5 \
+    tzdata \
+    curl \
+    git \
+    netcat-openbsd \
+    redis-tools \
+    iputils-ping \
+    procps \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bağımlılıkları kopyalama ve yükleme
+COPY requirements.staging.txt ./requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Health check için bekleme scripti
+COPY wait-for-it.sh /usr/local/bin/wait-for-it.sh
+RUN chmod +x /usr/local/bin/wait-for-it.sh
+
+# Uygulama kodunu kopyalama
+COPY app/ ./app/
+COPY alembic.ini ./
+COPY Makefile ./
+
+# Dizinleri oluşturma
+RUN mkdir -p /app/runtime/database /app/runtime/logs /app/runtime/sessions
+
+# Ortam değişkenleri
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV TZ=Europe/Istanbul
+ENV SESSION_NAME=telegram_session
+ENV ENV=staging
+
+# Runtime hakları için kullanıcı oluşturma
+RUN addgroup --system telegram && \
+    adduser --system --group telegram && \
+    chown -R telegram:telegram /app/runtime
+
+# Düşük yetkili kullanıcı olarak çalıştırma
+USER telegram
+
+# Standart konteyner port açıklaması
+EXPOSE 8000
+
+# Entry point
+ENTRYPOINT ["/usr/local/bin/wait-for-it.sh", "postgres:5432", "--", "python", "-m", "app.main"] 
