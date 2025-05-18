@@ -1,293 +1,246 @@
+#!/usr/bin/env python3
 import asyncio
 import logging
-from typing import Optional, Dict, Any, ClassVar, List
 from abc import ABC, abstractmethod
-
-from app.core.config import settings
-from app.core.scheduler import scheduler
+from datetime import datetime
+from typing import Dict, Any, Optional, Union, List
 
 logger = logging.getLogger(__name__)
 
 class ConfigAdapter:
-    """
-    Servisler için yapılandırma ayarları adaptörü.
+    """Yapılandırma adaptörü sınıfı."""
     
-    Farklı kaynaklardan (dosya, veritabanı, çevre değişkenleri) gelen
-    ayarları tek bir arayüzle sunar.
-    """
-    
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self._config = config or {}
-        
-    def get(self, key: str, default: Any = None) -> Any:
-        """
-        Ayar değerini getirir.
-        
-        Args:
-            key: Ayar anahtarı
-            default: Bulunamazsa döndürülecek varsayılan değer
-            
-        Returns:
-            Any: Ayar değeri
-        """
-        # Önce iç yapılandırmaya bak
-        if key in self._config:
-            return self._config[key]
-        
-        # Çevre değişkenlerine bak
-        env_key = key.upper()
-        if hasattr(settings, env_key):
-            return getattr(settings, env_key)
-            
-        # En son varsayılan değeri döndür
-        return default
-        
-    def set(self, key: str, value: Any) -> None:
-        """
-        Ayar değerini ayarlar.
-        
-        Args:
-            key: Ayar anahtarı
-            value: Ayar değeri
-        """
-        self._config[key] = value
-        
-    def update(self, config_dict: Dict[str, Any]) -> None:
-        """
-        Ayarları günceller.
-        
-        Args:
-            config_dict: Yeni ayarları içeren sözlük
-        """
-        self._config.update(config_dict)
-        
-    def get_all(self) -> Dict[str, Any]:
-        """
-        Tüm ayarları döndürür.
-        
-        Returns:
-            Dict[str, Any]: Tüm ayarlar
-        """
-        return self._config.copy()
-
+    @staticmethod
+    def get_config(key: str, default: Any = None) -> Any:
+        """Yapılandırma değerini al."""
+        from app.core.config import settings
+        return getattr(settings, key, default)
 
 class BaseService(ABC):
     """
-    Tüm servisler için temel sınıf.
+    Servisler için temel sınıf.
     
-    Asenkron başlatma, durdurma ve güncelleme işlemlerini sağlar.
+    Tüm servisler bu sınıftan türetilmeli ve gerekli metodları uygulamalıdır.
+    Temel servis yaşam döngüsü yönetimi burada gerçekleştirilir.
     """
     
-    # Sınıf değişkenleri
-    service_name: ClassVar[str] = "base_service"
-    default_interval: ClassVar[int] = 60  # Varsayılan güncelleme aralığı (saniye)
-    
-    def __init__(
-        self,
-        client=None,
-        config: Optional[Dict[str, Any]] = None,
-        stop_event: Optional[asyncio.Event] = None,
-        **kwargs
-    ):
-        """
-        Servis başlatma.
-        
-        Args:
-            client: Telegram istemcisi
-            config: Yapılandırma ayarları
-            stop_event: Durdurma eventi
-            **kwargs: Ek parametreler
-        """
-        self.client = client
-        self.config = ConfigAdapter(config)
-        self.stop_event = stop_event or asyncio.Event()
+    def __init__(self, name: str, interval: int = 60):
+        """BaseService başlatıcısı."""
+        self.name = name
+        self.interval = interval
         self.running = False
-        self._job_ids: List[str] = []
-        
-        # Ek parametreleri ayarla
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-            
-        self.logger = logging.getLogger(f"service.{self.get_service_name()}")
-        self.logger.info(f"{self.get_service_name()} servisi başlatıldı")
-        
-    @classmethod
-    def get_service_name(cls) -> str:
-        """
-        Servis adını döndürür.
-        
-        Returns:
-            str: Servis adı
-        """
-        return cls.service_name
-        
+        self.initialized = False
+        self.start_time = None
+        self.last_run_time = None
+        self.error_count = 0
+        self.success_count = 0
+        self.status_history: List[Dict[str, Any]] = []
+        self._task: Optional[asyncio.Task] = None
+        logger.info(f"{self.name} servisi başlatıldı")
+    
     async def initialize(self) -> bool:
         """
-        Servisi başlatma öncesi hazırlık yapar.
-        Bu metod, service_manager.py tarafından kullanılır.
+        Servisi başlat.
+        
+        Bu metod, servis başlatıldığında bir kez çağrılır.
+        Veritabanı bağlantıları, kaynak tahsisi vb. işlemler burada yapılmalıdır.
         
         Returns:
-            bool: Başlatma hazırlığı başarılıysa True
+            bool: Başlatma başarılı ise True
         """
-        return await self._start()
-        
-    async def start(self) -> bool:
+        try:
+            success = await self._start()
+            self.initialized = success
+            logger.info(f"Service '{self.name}' initialized: {success}")
+            return success
+        except Exception as e:
+            logger.error(f"Error initializing service '{self.name}': {e}", exc_info=True)
+            self.initialized = False
+            return False
+    
+    async def start(self):
         """
-        Servisi başlatır.
+        Servisi çalıştır.
         
-        Returns:
-            bool: Başlatma başarılıysa True
+        Bu metod, servisin ana döngüsünü başlatır ve arka planda çalışmasını sağlar.
+        """
+        if not self.initialized:
+            logger.warning(f"Service '{self.name}' not initialized, initializing now")
+            self.initialized = await self.initialize()
+            
+            if not self.initialized:
+                logger.error(f"Failed to initialize service '{self.name}', cannot start")
+                return
+        
+        if self.running:
+            logger.warning(f"Service '{self.name}' already running")
+            return
+        
+        logger.info(f"Starting service '{self.name}'")
+        self.running = True
+        self.start_time = datetime.now()
+        
+        # Arka planda çalışacak görevi oluştur
+        self._task = asyncio.create_task(self._run_loop(), name=f"service_{self.name}")
+    
+    async def _run_loop(self):
+        """Servisin ana çalışma döngüsü."""
+        logger.info(f"Service '{self.name}' started")
+        
+        while self.running:
+            try:
+                self.last_run_time = datetime.now()
+                
+                # Servisin ana işini çalıştır
+                success = await self._update()
+                
+                if success:
+                    self.success_count += 1
+                else:
+                    self.error_count += 1
+                    
+                # Son durumu kaydet
+                self._update_status_history()
+                
+                # Belirlenen aralık kadar bekle
+                await asyncio.sleep(self.interval)
+                
+            except asyncio.CancelledError:
+                logger.info(f"Service '{self.name}' task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in service '{self.name}': {e}", exc_info=True)
+                self.error_count += 1
+                # Hata durumunda daha kısa bekle
+                await asyncio.sleep(min(self.interval, 30))  # En fazla 30 saniye bekle
+    
+    def _update_status_history(self):
+        """Servis çalışma durumunu güncelle."""
+        status = {
+            "timestamp": datetime.now().isoformat(),
+            "running": self.running,
+            "success": self.success_count,
+            "errors": self.error_count,
+            "last_run": self.last_run_time.isoformat() if self.last_run_time else None
+        }
+        
+        self.status_history.append(status)
+        
+        # Sadece son 10 durumu sakla
+        if len(self.status_history) > 10:
+            self.status_history.pop(0)
+    
+    async def stop(self):
+        """Servisi durdur."""
+        if not self.running:
+            logger.warning(f"Service '{self.name}' not running")
+            return
+        
+        logger.info(f"Stopping service '{self.name}'")
+        self.running = False
+        
+        # Eğer görev varsa, iptal et ve tamamlanmasını bekle
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+        
+        # Servis kapanış işlemlerini yap
+        success = await self._stop()
+        logger.info(f"Service '{self.name}' stopped: {success}")
+    
+    async def cleanup(self):
+        """
+        Servis kapatılırken temizlik işleri.
+        
+        Kaynakları serbest bırakma, bağlantıları kapatma işlemleri burada yapılmalıdır.
         """
         try:
             if self.running:
-                self.logger.warning(f"{self.get_service_name()} servisi zaten çalışıyor")
-                return True
-                
-            self.logger.info(f"{self.get_service_name()} servisi başlatılıyor")
+                await self.stop()
             
-            # Servisin özel başlatma işlemlerini çağır
-            result = await self._start()
+            logger.info(f"Cleaning up service '{self.name}'")
+            # Ek temizlik işlemleri burada yapılabilir
             
-            if result:
-                self.running = True
-                
-                # Güncelleme görevini zamanlayıcıya ekle
-                interval = self.config.get("update_interval", self.default_interval)
-                job_id = await scheduler.add_interval_job(
-                    func=self.update,
-                    seconds=interval,
-                    job_id=f"{self.get_service_name()}_update"
-                )
-                self._job_ids.append(job_id)
-                
-                self.logger.info(f"{self.get_service_name()} servisi başlatıldı (aralık: {interval}s)")
-            else:
-                self.logger.error(f"{self.get_service_name()} servisi başlatılamadı")
-                
-            return result
+            self.initialized = False
+            logger.info(f"Service '{self.name}' cleanup completed")
         except Exception as e:
-            self.logger.exception(f"{self.get_service_name()} başlatma hatası: {str(e)}")
-            return False
-            
-    async def stop(self) -> bool:
-        """
-        Servisi durdurur.
-        
-        Returns:
-            bool: Durdurma başarılıysa True
-        """
-        try:
-            if not self.running:
-                self.logger.warning(f"{self.get_service_name()} servisi zaten durmuş")
-                return True
-                
-            self.logger.info(f"{self.get_service_name()} servisi durduruluyor")
-            
-            # Zamanlayıcı görevlerini kaldır
-            for job_id in self._job_ids:
-                scheduler.remove_job(job_id)
-            self._job_ids.clear()
-            
-            # Durdurma olayını tetikle
-            self.stop_event.set()
-            
-            # Servisin özel durdurma işlemlerini çağır
-            result = await self._stop()
-            
-            if result:
-                self.running = False
-                self.logger.info(f"{self.get_service_name()} servisi durduruldu")
-            else:
-                self.logger.error(f"{self.get_service_name()} servisi durdurulamadı")
-                
-            return result
-        except Exception as e:
-            self.logger.exception(f"{self.get_service_name()} durdurma hatası: {str(e)}")
-            return False
-            
-    async def update(self) -> None:
-        """
-        Servis güncelleme işlevini çağırır.
-        Bu metod zamanlayıcı tarafından çağrılır.
-        """
-        try:
-            # Servis durdurulduysa güncelleme yapma
-            if self.stop_event.is_set() or not self.running:
-                return
-                
-            # Alt sınıfın güncelleme işlemini çağır
-            await self._update()
-        except Exception as e:
-            self.logger.exception(f"{self.get_service_name()} güncelleme hatası: {str(e)}")
-            
-    async def restart(self) -> bool:
-        """
-        Servisi yeniden başlatır.
-        
-        Returns:
-            bool: Yeniden başlatma başarılıysa True
-        """
-        await self.stop()
-        # Durdurma eventi yenileniyor
-        self.stop_event = asyncio.Event()
-        return await self.start()
+            logger.error(f"Error during cleanup of service '{self.name}': {e}", exc_info=True)
     
-    async def run(self) -> None:
+    async def get_status(self) -> Dict[str, Any]:
         """
-        Servisin ana döngüsü. Bu metod service_manager.py tarafından çağrılır.
-        Varsayılan olarak asenkron uyku döngüsü ile çalışır ve _update metodunu çağırır.
+        Servisin mevcut durumunu döndür.
         
-        Bu metod override edilebilir ancak genellikle gerekli değildir.
+        Returns:
+            Dict[str, Any]: Servis durum bilgileri
         """
-        self.logger.info(f"{self.get_service_name()} run() metodu başlatıldı")
+        uptime = (datetime.now() - self.start_time).total_seconds() if self.start_time else 0
         
-        # Service manager tarafından başlatıldığında
-        if not self.running:
-            await self.start()
+        return {
+            "name": self.name,
+            "running": self.running,
+            "initialized": self.initialized,
+            "uptime_seconds": uptime,
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+            "last_run": self.last_run_time.isoformat() if self.last_run_time else None,
+            "success_count": self.success_count,
+            "error_count": self.error_count,
+            "interval": self.interval
+        }
+    
+    async def set_interval(self, seconds: int) -> bool:
+        """
+        Servisin çalışma aralığını değiştir.
+        
+        Args:
+            seconds: Yeni çalışma aralığı (saniye)
             
-        try:
-            while not self.stop_event.is_set() and self.running:
-                try:
-                    # _update metodunu çağır - scheduler'dan bağımsız olarak
-                    await self._update()
-                except Exception as e:
-                    self.logger.exception(f"{self.get_service_name()} run güncelleme hatası: {str(e)}")
-                    
-                # Servis özel aralığına göre bekle
-                await asyncio.sleep(self.default_interval)
-                
-        except asyncio.CancelledError:
-            self.logger.info(f"{self.get_service_name()} run() metodu iptal edildi")
-            # Durdurma işlemini çağır
-            await self.stop()
-        except Exception as e:
-            self.logger.exception(f"{self.get_service_name()} run() metodu hatası: {str(e)}")
-        finally:
-            self.logger.info(f"{self.get_service_name()} run() metodu sonlandı")
-            
+        Returns:
+            bool: İşlem başarılı ise True
+        """
+        if seconds < 1:
+            logger.warning(f"Invalid interval for service '{self.name}': {seconds}")
+            return False
+        
+        self.interval = seconds
+        logger.info(f"Service '{self.name}' interval updated to {seconds} seconds")
+        return True
+    
     @abstractmethod
     async def _start(self) -> bool:
         """
-        Alt sınıflar tarafından uygulanacak başlatma metodu.
+        Servis başlatma özel işlemleri.
+        
+        Alt sınıflar tarafından uygulanmalıdır.
         
         Returns:
-            bool: Başlatma başarılıysa True
+            bool: Başlatma başarılı ise True
         """
         pass
-        
+    
     @abstractmethod
     async def _stop(self) -> bool:
         """
-        Alt sınıflar tarafından uygulanacak durdurma metodu.
+        Servis durdurma özel işlemleri.
+        
+        Alt sınıflar tarafından uygulanmalıdır.
         
         Returns:
-            bool: Durdurma başarılıysa True
+            bool: Durdurma başarılı ise True
         """
         pass
-        
+    
     @abstractmethod
-    async def _update(self) -> None:
+    async def _update(self) -> bool:
         """
-        Alt sınıflar tarafından uygulanacak güncelleme metodu.
+        Servisin periyodik olarak çalıştıracağı iş.
+        
+        Alt sınıflar tarafından uygulanmalıdır.
+        
+        Returns:
+            bool: İşlem başarılı ise True
         """
         pass 

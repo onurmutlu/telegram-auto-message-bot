@@ -38,5 +38,29 @@
     "Merhaba! Sizi bir süredir göremiyoruz. Yeni geliştirmelerimizi keşfetmeye ne dersiniz?",
     "Botumuzda birçok yenilik var! Tekrar hoş geldiniz demeyi çok isteriz.",
     "Size özlediğimizi söylemek istedik! Botumuzun yeni sürümü artık kullanımda, keşfetmek ister misiniz?"
+  ],
+  "promo_general": [
+    "📣 Dikkat! Yeni grubumuz açıldı: t.me/yeni_grup - Katılarak güncel bilgilere ilk siz ulaşın!",
+    "🌟 Telegram'ın en aktif topluluğuna katılmak için: t.me/aktif_topluluk",
+    "💼 İş ve kariyer fırsatları için özel grubumuz: t.me/is_firsatlari",
+    "📚 Eğitim içeriklerimize ulaşmak için: t.me/egitim_kanali"
+  ],
+  "promo_event": [
+    "🎯 Bu hafta sonu özel webinarımıza davetlisiniz! Detaylar: t.me/webinar_davet",
+    "🎤 Canlı soru-cevap etkinliğimiz başlıyor! Katılmak için: t.me/canli_etkinlik",
+    "🏆 Yarışmamıza katılın, ödülleri kazanma şansı yakalayın: t.me/yarisma_kanali",
+    "📅 Yaklaşan etkinliklerimizden haberdar olmak için: t.me/etkinlik_takvimi"
+  ],
+  "promo_offer": [
+    "💰 Özel indirim kodları için grubumuz: t.me/indirim_firsatlari",
+    "🎁 Bu hafta özel hediyeler dağıtıyoruz! Katılmak için: t.me/hediye_kanali",
+    "🔥 Sınırlı sayıda premium üyelik için son gün! Detaylar: t.me/premium_uyelik",
+    "💎 VIP üyelerimize özel içerikler için: t.me/vip_icerikler"
+  ],
+  "promo_info": [
+    "ℹ️ Daha fazla bilgi için web sitemizi ziyaret edin: website.com",
+    "📞 Sorularınız için iletişim kanalımız: t.me/iletisim_kanali",
+    "📋 Tüm hizmetlerimizin listesi için: t.me/hizmetlerimiz",
+    "🔔 Güncel duyurular için takip edin: t.me/duyurular"
   ]
 } 

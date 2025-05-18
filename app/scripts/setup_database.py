@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.db.session import get_db
+from app.db.session import get_session
 from app.core.config import settings
 
 # Loglama yapılandırması
@@ -38,7 +38,7 @@ async def create_tables(db: AsyncSession):
     
     try:
         # users tablosu
-        await db.execute("""
+        db.execute(text("""
             CREATE TABLE IF NOT EXISTS users (
                 id BIGINT PRIMARY KEY,
                 username VARCHAR(255),
@@ -54,10 +54,10 @@ async def create_tables(db: AsyncSession):
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             );
-        """)
+        """))
         
         # groups tablosu
-        await db.execute("""
+        db.execute(text("""
             CREATE TABLE IF NOT EXISTS groups (
                 id SERIAL PRIMARY KEY,
                 chat_id BIGINT NOT NULL UNIQUE,
@@ -80,10 +80,10 @@ async def create_tables(db: AsyncSession):
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             );
-        """)
+        """))
         
         # group_cooldowns tablosu
-        await db.execute("""
+        db.execute(text("""
             CREATE TABLE IF NOT EXISTS group_cooldowns (
                 id SERIAL PRIMARY KEY,
                 group_id INT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
@@ -93,10 +93,10 @@ async def create_tables(db: AsyncSession):
                 updated_at TIMESTAMP DEFAULT NOW(),
                 UNIQUE(group_id)
             );
-        """)
+        """))
         
         # message_templates tablosu
-        await db.execute("""
+        db.execute(text("""
             CREATE TABLE IF NOT EXISTS message_templates (
                 id SERIAL PRIMARY KEY,
                 content TEXT NOT NULL,
@@ -106,10 +106,10 @@ async def create_tables(db: AsyncSession):
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             );
-        """)
+        """))
         
         # messages tablosu
-        await db.execute("""
+        db.execute(text("""
             CREATE TABLE IF NOT EXISTS messages (
                 id SERIAL PRIMARY KEY,
                 group_id INT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
@@ -126,10 +126,10 @@ async def create_tables(db: AsyncSession):
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             );
-        """)
+        """))
         
         # user_interactions tablosu
-        await db.execute("""
+        db.execute(text("""
             CREATE TABLE IF NOT EXISTS user_interactions (
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT NOT NULL,
@@ -138,10 +138,10 @@ async def create_tables(db: AsyncSession):
                 interaction_type VARCHAR(50) NOT NULL,
                 created_at TIMESTAMP DEFAULT NOW()
             );
-        """)
+        """))
         
         # user_dm_activities tablosu
-        await db.execute("""
+        db.execute(text("""
             CREATE TABLE IF NOT EXISTS user_dm_activities (
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT NOT NULL,
@@ -150,10 +150,10 @@ async def create_tables(db: AsyncSession):
                 response_to TEXT,
                 created_at TIMESTAMP DEFAULT NOW()
             );
-        """)
+        """))
         
         # services tablosu
-        await db.execute("""
+        db.execute(text("""
             CREATE TABLE IF NOT EXISTS services (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(255) NOT NULL,
@@ -164,14 +164,14 @@ async def create_tables(db: AsyncSession):
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             );
-        """)
+        """))
         
-        await db.commit()
+        db.commit()
         logger.info("Tablolar başarıyla oluşturuldu.")
         
     except Exception as e:
         logger.error(f"Tablo oluşturma hatası: {str(e)}", exc_info=True)
-        await db.rollback()
+        db.rollback()
 
 async def add_demo_data(db: AsyncSession):
     """Demo verileri ekle."""
@@ -179,7 +179,7 @@ async def add_demo_data(db: AsyncSession):
     
     try:
         # Demo grup ekle
-        await db.execute("""
+        db.execute(text("""
             INSERT INTO groups (
                 chat_id, title, username, description, invite_link, 
                 member_count, is_active, is_admin, category, priority
@@ -189,10 +189,10 @@ async def add_demo_data(db: AsyncSession):
                 100, true, true, 'test', 10
             )
             ON CONFLICT (chat_id) DO NOTHING;
-        """)
+        """))
         
         # Demo servis ekle
-        await db.execute("""
+        db.execute(text("""
             INSERT INTO services (
                 name, description, price, priority, is_active
             ) VALUES
@@ -200,14 +200,14 @@ async def add_demo_data(db: AsyncSession):
                 ('Grup Yönetimi', 'Telegram gruplarınızın profesyonel yönetimi', 99.90, 5, true),
                 ('Bot Geliştirme', 'Özel Telegram bot geliştirme hizmeti', 199.90, 3, true)
             ON CONFLICT DO NOTHING;
-        """)
+        """))
         
-        await db.commit()
+        db.commit()
         logger.info("Demo veriler başarıyla eklendi.")
         
     except Exception as e:
         logger.error(f"Demo veri ekleme hatası: {str(e)}", exc_info=True)
-        await db.rollback()
+        db.rollback()
 
 async def check_database(db: AsyncSession):
     """Veritabanı bağlantısını ve yapısını kontrol et."""
@@ -215,13 +215,13 @@ async def check_database(db: AsyncSession):
     
     try:
         # Veritabanı bağlantısını kontrol et
-        result = await db.execute("SELECT 1")
+        result = db.execute(text("SELECT 1"))
         if result.scalar() == 1:
             logger.info("Veritabanı bağlantısı başarılı.")
         else:
             logger.error("Veritabanı bağlantısı başarısız.")
             return False
-            
+        
         # Tabloları kontrol et
         tables = [
             "users", "groups", "group_cooldowns", "message_templates", 
@@ -229,13 +229,13 @@ async def check_database(db: AsyncSession):
         ]
         
         for table in tables:
-            query = f"""
+            query = text(f"""
                 SELECT EXISTS (
                     SELECT FROM information_schema.tables 
                     WHERE table_name = '{table}'
                 );
-            """
-            result = await db.execute(query)
+            """)
+            result = db.execute(query)
             if result.scalar():
                 logger.info(f"'{table}' tablosu mevcut.")
             else:
@@ -254,52 +254,52 @@ async def create_indexes(db: AsyncSession):
     
     try:
         # users tablosu indeksleri
-        await db.execute("""
+        db.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
             CREATE INDEX IF NOT EXISTS idx_users_last_activity ON users(last_activity_at);
             CREATE INDEX IF NOT EXISTS idx_users_last_dm ON users(last_dm_at);
-        """)
+        """))
         
         # groups tablosu indeksleri
-        await db.execute("""
+        db.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_groups_is_active ON groups(is_active);
             CREATE INDEX IF NOT EXISTS idx_groups_is_admin ON groups(is_admin);
             CREATE INDEX IF NOT EXISTS idx_groups_priority ON groups(priority);
             CREATE INDEX IF NOT EXISTS idx_groups_last_activity ON groups(last_activity_at);
-        """)
+        """))
         
         # message_templates tablosu indeksleri
-        await db.execute("""
+        db.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_templates_type ON message_templates(type);
             CREATE INDEX IF NOT EXISTS idx_templates_engagement ON message_templates(engagement_rate);
-        """)
+        """))
         
         # messages tablosu indeksleri
-        await db.execute("""
+        db.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_messages_group_id ON messages(group_id);
             CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
             CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(type);
-        """)
+        """))
         
         # user_interactions tablosu indeksleri
-        await db.execute("""
+        db.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_interactions_user_id ON user_interactions(user_id);
             CREATE INDEX IF NOT EXISTS idx_interactions_created_at ON user_interactions(created_at);
-        """)
+        """))
         
-        await db.commit()
+        db.commit()
         logger.info("İndeksler başarıyla oluşturuldu.")
         
     except Exception as e:
         logger.error(f"İndeks oluşturma hatası: {str(e)}", exc_info=True)
-        await db.rollback()
+        db.rollback()
 
 async def main():
     """Ana fonksiyon."""
     logger.info("Veritabanı kurulumu başlatılıyor...")
     
     # Veritabanı bağlantısı
-    db = await get_db().__anext__()
+    db = next(get_session())
     
     try:
         # Veritabanı bağlantısını kontrol et
@@ -324,7 +324,7 @@ async def main():
     except Exception as e:
         logger.error(f"Veritabanı kurulumu sırasında hata: {str(e)}", exc_info=True)
     finally:
-        await db.close()
+        db.close()
 
 if __name__ == "__main__":
     asyncio.run(main()) 

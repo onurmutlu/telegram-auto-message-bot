@@ -1,0 +1,428 @@
+"""
+# ============================================================================ #
+# Dosya: promo_service.py
+# Yol: /Users/siyahkare/code/telegram-bot/app/services/messaging/promo_service.py
+# İşlev: Telegram bot tanıtım mesajları için servis.
+#
+# Versiyon: v1.0.0
+# ============================================================================ #
+"""
+
+import logging
+import random
+import json
+import os
+import asyncio
+import traceback
+from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional, Union
+from pathlib import Path
+from sqlalchemy import text
+
+from app.services.base_service import BaseService
+from app.db.session import get_session
+from app.core.config import settings
+from app.models.message import MessageType
+from sqlalchemy.ext.asyncio import AsyncSession
+from telethon import TelegramClient
+from telethon.errors import (
+    ChatAdminRequiredError, 
+    ChatWriteForbiddenError, 
+    FloodWaitError,
+    UserBannedInChannelError
+)
+
+logger = logging.getLogger(__name__)
+
+class PromoService(BaseService):
+    """
+    Üye olmadığımız gruplara tanıtım mesajları gönderen servis.
+    - Grup aktivitesine göre gönderim sıklığını ayarlar
+    - Hata durumlarında grupları geçici olarak soğutur
+    - Çeşitli tanıtım mesaj şablonları kullanır
+    """
+    
+    service_name = "promo_service"
+    
+    def __init__(self, client: TelegramClient, db: AsyncSession = None):
+        super().__init__(name="promo_service")
+        self.client = client
+        self.db = db
+        self.initialized = False
+        self.running = False
+        
+        # Soğutulan grupları izlemek için
+        self.cooling_groups: Dict[int, datetime] = {}
+        
+        # Grup bazında son mesaj gönderim zamanlarını izlemek için
+        self.last_message_times: Dict[int, datetime] = {}
+        
+        # Grup bazlı hata sayaçları
+        self.error_counters: Dict[int, int] = {}
+        
+        # Tanıtım mesaj şablonları
+        self.promo_templates = []
+        
+        # İstatistikler
+        self.active_campaigns = []
+        self.templates = {}
+        self.messages = {}
+        self.dm_templates = {}
+        self.send_interval = 300
+        self.promo_limit_daily = 100
+    
+    async def initialize(self):
+        """Servisi başlat ve şablonları yükle."""
+        self.db = self.db or next(get_session())
+        await self._load_templates()
+        logger.info(f"PromoService initialized with {len(self.promo_templates)} promo templates")
+        self.initialized = True
+        return True
+    
+    async def _load_templates(self):
+        """Veritabanından tanıtım mesajı şablonlarını yükle."""
+        query = """
+            SELECT id, content, engagement_rate 
+            FROM message_templates 
+            WHERE is_active = true AND type = 'promo'
+            ORDER BY engagement_rate DESC
+        """
+        result = await self.db.execute(query)
+        self.promo_templates = result.fetchall()
+        
+        # Templates sözlüğünü güncelle
+        self.templates = {
+            "promo": self.promo_templates
+        }
+    
+    async def start_promo_loop(self):
+        """Ana tanıtım mesajı döngüsünü başlat."""
+        logger.info("Starting promo loop")
+        self.running = True
+        
+        while self.running:
+            try:
+                # Hedef grupları al
+                target_groups = await self._get_target_groups()
+                
+                if not target_groups:
+                    logger.info("No target groups found for promo, waiting for 30 minutes...")
+                    await asyncio.sleep(1800)  # 30 dakika bekle
+                    continue
+                
+                # Her grup için tanıtım mesajı gönderme süreci
+                for group in target_groups:
+                    if not self.running:
+                        break
+                        
+                    group_id = group["id"]
+                    
+                    # Grup hala soğutuluyorsa atla
+                    if await self._is_group_cooling(group_id):
+                        continue
+                    
+                    # Grup için son mesaj zamanını kontrol et
+                    if not await self._should_send_promo(group):
+                        continue
+                    
+                    # Tanıtım mesajı göndermeyi dene
+                    success = await self._send_promo_message(group)
+                    
+                    # Mesaj gönderim başarısına göre işlem yap
+                    if success:
+                        # Başarılı gönderim, son gönderim zamanını güncelle
+                        self.last_message_times[group_id] = datetime.now()
+                        self.error_counters[group_id] = 0  # Hata sayacını sıfırla
+                    else:
+                        # Başarısız gönderim, hata sayacını artır
+                        self.error_counters[group_id] = self.error_counters.get(group_id, 0) + 1
+                        
+                        # Belirli sayıda başarısız denemeden sonra grubu soğut
+                        if self.error_counters[group_id] >= 3:
+                            await self._cool_down_group(group_id)
+                    
+                    # Flood Wait'ten kaçınmak için her mesaj arasında bekle
+                    await asyncio.sleep(random.randint(60, 120))  # 1-2 dakika
+                
+                # İşlemler arasında kısa bekle
+                await asyncio.sleep(300)  # 5 dakika
+                
+            except Exception as e:
+                logger.error(f"Error in promo loop: {str(e)}", exc_info=True)
+                await asyncio.sleep(600)  # Hata durumunda 10 dakika bekle
+    
+    async def _get_target_groups(self) -> List[Dict]:
+        """Tanıtım mesajı gönderilecek hedef grupları belirle."""
+        # Üye olmadığımız aktif grupları getir
+        query = """
+            SELECT g.id, g.chat_id, g.title, g.member_count, 
+                   (SELECT COUNT(*) FROM messages WHERE group_id = g.id AND created_at > NOW() - INTERVAL '24 hours') as message_count,
+                   g.is_admin, g.last_activity_at, 
+                   (SELECT COUNT(*) FROM messages WHERE group_id = g.id AND type = 'promo' AND created_at > NOW() - INTERVAL '7 days') as promo_count,
+                   g.category, g.description, g.engagement_rate, g.priority
+            FROM groups g
+            WHERE g.is_active = true 
+              AND g.is_banned = false 
+              AND g.is_joined = true
+              AND g.is_admin = false
+              AND g.id NOT IN (SELECT group_id FROM group_cooldowns WHERE until > NOW())
+              AND (SELECT COUNT(*) FROM messages WHERE group_id = g.id AND type = 'promo' AND created_at > NOW() - INTERVAL '24 hours') < 3
+            ORDER BY g.priority DESC, g.last_activity_at DESC
+            LIMIT 50
+        """
+        result = await self.db.execute(query)
+        groups = result.fetchall()
+        
+        # Dict formatına dönüştür
+        target_groups = []
+        for row in groups:
+            group_dict = dict(row)
+            # Soğutulan grupları filtrele
+            if group_dict["chat_id"] not in self.cooling_groups:
+                target_groups.append(group_dict)
+        
+        return target_groups
+    
+    async def _is_group_cooling(self, group_id: int) -> bool:
+        """Grup soğutma sürecinde mi kontrol et."""
+        if group_id in self.cooling_groups:
+            cool_until = self.cooling_groups[group_id]
+            if datetime.now() < cool_until:
+                return True
+            else:
+                # Soğutma süresi dolmuş, listeden çıkar
+                del self.cooling_groups[group_id]
+        return False
+    
+    async def _should_send_promo(self, group: Dict) -> bool:
+        """Gruba tanıtım mesajı gönderme zamanı gelmiş mi kontrol et."""
+        group_id = group["id"]
+        chat_id = group["chat_id"]
+        message_count = group["message_count"]
+        promo_count = group["promo_count"]
+        
+        # Son mesaj gönderim zamanını kontrol et
+        last_sent = self.last_message_times.get(chat_id, datetime.now() - timedelta(days=1))
+        time_since_last = (datetime.now() - last_sent).total_seconds() / 60  # dakika
+        
+        # Son 7 günde gönderilen tanıtım mesajı sayısına göre bekleme süresini ayarla
+        if promo_count >= 10:
+            # Çok fazla tanıtım mesajı göndermişsek, daha uzun bekle
+            wait_time = random.randint(24*60, 48*60)  # 24-48 saat
+        elif promo_count >= 5:
+            wait_time = random.randint(12*60, 24*60)  # 12-24 saat
+        elif promo_count >= 3:
+            wait_time = random.randint(6*60, 12*60)  # 6-12 saat
+        else:
+            # Mesaj trafiğine göre bekleme süresini ayarla
+            if message_count > 500:  # Son 24 saatte çok aktif
+                wait_time = random.randint(180, 360)  # 3-6 saat
+            elif message_count > 200:  # Son 24 saatte aktif
+                wait_time = random.randint(360, 720)  # 6-12 saat
+            elif message_count > 50:   # Son 24 saatte orta düzeyde aktif
+                wait_time = random.randint(720, 1440)  # 12-24 saat
+            else:  # Az aktif
+                wait_time = random.randint(1440, 2880)  # 24-48 saat
+        
+        # Grup büyüklüğüne göre bekleme süresini ayarla
+        member_count = group.get("member_count", 0)
+        if member_count > 10000:
+            wait_time = max(wait_time, 720)  # En az 12 saat bekle
+        
+        # Kategori bazlı ayarlamalar
+        category = group.get("category", "").lower()
+        if category in ["önemli", "important", "partner"]:
+            wait_time = int(wait_time * 0.7)  # %30 daha az bekle
+        
+        return time_since_last >= wait_time
+    
+    async def _select_promo_template(self, group: Dict) -> Optional[Dict]:
+        """Grup için uygun tanıtım mesajı şablonunu seç."""
+        if not self.promo_templates:
+            await self._load_templates()
+            if not self.promo_templates:
+                return None
+        
+        # Son gönderilen mesajları kontrol et
+        query = """
+            SELECT template_id
+            FROM messages
+            WHERE group_id = :group_id AND type = 'promo'
+            ORDER BY created_at DESC
+            LIMIT 5
+        """
+        result = await self.db.execute(query, {"group_id": group["id"]})
+        recent_templates = [row[0] for row in result.fetchall()]
+        
+        # Son kullanılan şablonları filtreleme
+        available_templates = [
+            t for t in self.promo_templates 
+            if t["id"] not in recent_templates
+        ]
+        
+        if not available_templates:
+            # Tüm şablonlar kullanılmışsa, en yüksek engagement rate'e sahip olanı seç
+            available_templates = sorted(
+                self.promo_templates,
+                key=lambda x: x["engagement_rate"],
+                reverse=True
+            )
+        
+        # Grup kategorisine göre mesaj seçimini iyileştir
+        category = group.get("category", "").lower()
+        categorized_templates = [
+            t for t in available_templates 
+            if category in t["content"].lower()
+        ]
+        
+        if categorized_templates:
+            # Kategori uyumlu şablonları tercih et
+            template = random.choice(categorized_templates)
+        elif available_templates:
+            # Biraz rastgelelik ekleyerek, yüksek engagement'lı şablonlara ağırlık ver
+            weights = [max(0.1, t["engagement_rate"]) for t in available_templates]
+            sum_weights = sum(weights)
+            normalized_weights = [w/sum_weights for w in weights]
+            
+            template = random.choices(
+                available_templates, 
+                weights=normalized_weights, 
+                k=1
+            )[0]
+        else:
+            return None
+            
+        return template
+    
+    async def _send_promo_message(self, group: Dict) -> bool:
+        """Gruba tanıtım mesajı gönder."""
+        try:
+            template = await self._select_promo_template(group)
+            if not template:
+                logger.warning(f"No suitable promo template found for group {group['title']}")
+                return False
+            
+            # Mesaj içeriğini hazırla
+            message_content = template["content"]
+            
+            # Grup adı gibi değişkenleri yerleştir
+            message_content = message_content.replace("{group_name}", group["title"])
+                    
+            # Mesajı gönder
+            chat_id = group["chat_id"]
+            message = await self.client.send_message(chat_id, message_content)
+            
+            # Mesajı veritabanına kaydet
+            query = """
+                INSERT INTO messages (group_id, message_id, content, template_id, type, sent_at, created_at)
+                VALUES (:group_id, :message_id, :content, :template_id, 'promo', NOW(), NOW())
+                RETURNING id
+            """
+            params = {
+                "group_id": group["id"],
+                "message_id": message.id,
+                "content": message_content,
+                "template_id": template["id"]
+            }
+            await self.db.execute(query, params)
+            
+            # Grup son aktivite zamanını güncelle
+            query = """
+                UPDATE groups
+                SET last_promo_at = NOW(), promo_count = promo_count + 1, last_activity_at = NOW()
+                WHERE id = :group_id
+            """
+            await self.db.execute(query, {"group_id": group["id"]})
+            await self.db.commit()
+            
+            logger.info(f"Sent promo message to group {group['title']} (ID: {chat_id})")
+            return True
+            
+        except FloodWaitError as e:
+            # FloodWait hatasında belirtilen süre kadar bekle
+            wait_seconds = e.seconds
+            logger.warning(f"FloodWait for {wait_seconds}s in group {group['title']}")
+            await self._cool_down_group(group["id"], minutes=max(wait_seconds//60 + 10, 60))
+            return False
+            
+        except (ChatAdminRequiredError, ChatWriteForbiddenError, UserBannedInChannelError) as e:
+            # Gruba mesaj gönderme izni yok, uzun süre soğut
+            logger.warning(f"No permission to send promo to group {group['title']}: {str(e)}")
+            await self._cool_down_group(group["id"], minutes=60*24*7)  # 1 hafta soğut
+            
+            # Grubu veritabanında güncelle
+            query = """
+                UPDATE groups
+                SET is_banned = true, last_error = :error, updated_at = NOW()
+                WHERE id = :group_id
+            """
+            await self.db.execute(query, {"group_id": group["id"], "error": str(e)})
+            await self.db.commit()
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error sending promo to group {group['title']}: {str(e)}", exc_info=True)
+            return False
+    
+    async def _cool_down_group(self, group_id: int, minutes: int = 180) -> None:
+        """Grubu belirtilen süre kadar soğut."""
+        cool_until = datetime.now() + timedelta(minutes=minutes)
+        self.cooling_groups[group_id] = cool_until
+        
+        # Veritabanına kaydedelim
+        query = """
+            INSERT INTO group_cooldowns (group_id, until, reason, created_at)
+            VALUES (:group_id, :until, 'Promo error threshold exceeded', NOW())
+            ON CONFLICT (group_id) DO UPDATE
+            SET until = :until, updated_at = NOW()
+        """
+        await self.db.execute(query, {"group_id": group_id, "until": cool_until})
+        await self.db.commit()
+        
+        logger.info(f"Cooling down group {group_id} for promo until {cool_until}")
+    
+    async def cleanup(self):
+        """Servis kapatılırken temizlik."""
+        # Burada kaynakları temizleme işlemleri yapılabilir
+        self.running = False
+        logger.info("PromoService cleanup completed")
+    
+    async def get_status(self) -> Dict[str, Any]:
+        """
+        Servis durumunu döndürür.
+        
+        Returns:
+            Dict[str, Any]: Durum bilgileri
+        """
+        return {
+            "name": self.service_name,
+            "running": self.running,
+            "initialized": self.initialized,
+            "active_campaigns": len(self.active_campaigns),
+            "templates": {k: len(v) for k, v in self.templates.items()},
+            "message_categories": len(self.messages) if hasattr(self, 'messages') else 0,
+            "dm_categories": len(self.dm_templates) if hasattr(self, 'dm_templates') else 0,
+            "promo_interval": f"{self.send_interval}s",
+            "promo_limit_daily": self.promo_limit_daily
+        }
+
+    async def _start(self) -> bool:
+        """BaseService için başlatma metodu"""
+        return await self.initialize()
+        
+    async def _stop(self) -> bool:
+        """BaseService için durdurma metodu"""
+        try:
+            self.initialized = False
+            self.running = False
+            await self.cleanup()
+            return True
+        except Exception as e:
+            logger.error(f"PromoService durdurma hatası: {e}")
+            return False
+            
+    async def _update(self) -> bool:
+        """Periyodik güncelleme metodu"""
+        # Şablonları yeniden yükle 
+        await self._load_templates()
+        return True

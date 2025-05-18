@@ -47,11 +47,11 @@ class MessageResponse(MessageBase):
     
     class Config:
         """Pydantic yapılandırması."""
-        orm_mode = True
+        from_attributes = True
         
 class MessageScheduleResponse(BaseModel):
     """Mesaj zamanlama yanıt şeması."""
     id: int = Field(..., description="Mesaj ID'si")
     scheduled_time: datetime = Field(..., description="Zamanlanmış tarih/saat")
     status: str = Field(..., description="Mesaj durumu")
-    message: str = Field(..., description="Bilgi mesajı") 
+    message: str = Field(..., description="Bilgi mesajı")

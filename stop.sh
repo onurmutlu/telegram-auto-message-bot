@@ -2,65 +2,102 @@
 
 # ============================================================================ #
 # Dosya: stop.sh
-# İşlev: Telegram botunu ve event listener'ı durduran yardımcı script.
+# Yol: /Users/siyahkare/code/telegram-bot/stop.sh
+# İşlev: Telegram botunu ve ilgili servisleri güvenli bir şekilde durdurur
 #
-# Kullanım: ./stop.sh
+# Versiyon: v2.0.0
 # ============================================================================ #
 
-# Renk tanımlamaları
-GREEN='\033[0;32m'
+# Renk tanımları
 RED='\033[0;31m'
+GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # Renk yok
+NC='\033[0m' # No Color
 
-echo -e "${BLUE}Çalışan bot süreçleri kontrol ediliyor...${NC}"
+echo -e "${BLUE}Telegram Bot durduruluyor...${NC}"
 
-# Kayıtlı PID'leri kontrol et
-APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PID_FILE="$APP_DIR/.bot_pids"
+# PID dosyası
+PID_FILE=".bot_pids"
 
-if [ -f "$PID_FILE" ]; then
-    echo -e "${YELLOW}PID dosyası bulundu.${NC}"
-    SAVED_PIDS=$(cat "$PID_FILE")
-    echo -e "Kayıtlı PID'ler: ${YELLOW}$SAVED_PIDS${NC}"
-    
-    for PID in $SAVED_PIDS; do
-        if ps -p $PID > /dev/null; then
-            echo -e "PID ${YELLOW}$PID${NC} sonlandırılıyor..."
-            kill -9 $PID
-            sleep 0.5
+# PID dosyası var mı kontrol et
+if [ ! -f "$PID_FILE" ]; then
+    echo -e "${YELLOW}PID dosyası bulunamadı. Bot çalışmıyor olabilir.${NC}"
+    exit 0
+fi
+
+# PID listesi
+pids=$(cat $PID_FILE)
+
+# Hata sayacı
+error_count=0
+
+# Her PID için
+for pid in $pids; do
+    if [ -n "$pid" ]; then
+        echo -e "${YELLOW}PID: $pid durduruluyor...${NC}"
+        
+        # Süreç hala çalışıyor mu kontrol et
+        if ps -p $pid > /dev/null 2>&1; then
+            # SIGTERM gönder (graceful shutdown)
+            kill -15 $pid 2>/dev/null
+            
+            # 5 saniye bekle
+            echo "Bekleniyor..."
+            sleep 5
+            
+            # Hala çalışıyor mu kontrol et
+            if ps -p $pid > /dev/null 2>&1; then
+                echo -e "${YELLOW}PID: $pid SIGTERM ile durdurulamadı, SIGKILL deneniyor...${NC}"
+                # SIGKILL gönder (zorla durdur)
+                kill -9 $pid 2>/dev/null
+                
+                # 2 saniye bekle
+                sleep 2
+                
+                # Son kontrol
+                if ps -p $pid > /dev/null 2>&1; then
+                    echo -e "${RED}PID: $pid durdurulamadı.${NC}"
+                    error_count=$((error_count+1))
+                else
+                    echo -e "${GREEN}PID: $pid durduruldu.${NC}"
+                fi
+            else
+                echo -e "${GREEN}PID: $pid durduruldu.${NC}"
+            fi
         else
-            echo -e "PID ${RED}$PID${NC} zaten çalışmıyor."
+            echo -e "${YELLOW}PID: $pid zaten çalışmıyor.${NC}"
         fi
-    done
+    fi
+done
+
+# PID dosyasını temizle
+echo "" > $PID_FILE
+
+# Docker altında çalışıyorsa, Python süreçlerini de temizle
+if [ -f "/.dockerenv" ]; then
+    echo -e "${YELLOW}Docker ortamında Python süreçleri kontrol ediliyor...${NC}"
+    python_procs=$(pgrep -f "python -m app")
     
-    # PID dosyasını temizle
-    rm -f "$PID_FILE"
-    echo -e "${GREEN}PID dosyası temizlendi.${NC}"
-else
-    # Çalışan süreçleri bul ve sonlandır
-    echo -e "${YELLOW}PID dosyası bulunamadı. Süreçler otomatik aranıyor...${NC}"
-    PIDS=$(ps aux | grep -E "app\.core\.unified\.main|event_listener|python.*telegram" | grep -v grep | awk '{print $2}')
-    
-    if [ -n "$PIDS" ]; then
-        echo -e "${YELLOW}Çalışan bot süreçleri bulundu. Sonlandırılıyor...${NC}"
-        for PID in $PIDS; do
-            echo -e "PID ${YELLOW}$PID${NC} sonlandırılıyor..."
-            kill -9 $PID
-            sleep 0.5
+    if [ -n "$python_procs" ]; then
+        echo -e "${YELLOW}Python süreçleri bulundu, durduruluyor...${NC}"
+        for proc in $python_procs; do
+            echo -e "${YELLOW}Python PID: $proc durduruluyor...${NC}"
+            kill -15 $proc 2>/dev/null
+            sleep 2
+            # Hala çalışıyor mu kontrol et
+            if ps -p $proc > /dev/null 2>&1; then
+                kill -9 $proc 2>/dev/null
+            fi
         done
-    else
-        echo -e "${GREEN}Çalışan bot süreci bulunamadı.${NC}"
     fi
 fi
 
-# Son bir kontrol daha yap
-REMAINING=$(ps aux | grep -E "app\.core\.unified\.main|event_listener|python.*telegram" | grep -v grep)
-if [ -z "$REMAINING" ]; then
-    echo -e "${GREEN}Tüm bot süreçleri sonlandırıldı.${NC}"
+# Sonuç
+if [ $error_count -eq 0 ]; then
+    echo -e "${GREEN}Telegram Bot ve ilgili servisler başarıyla durduruldu.${NC}"
+    exit 0
 else
-    echo -e "${RED}Bazı süreçler hala çalışıyor olabilir:${NC}"
-    echo "$REMAINING"
-    echo -e "${YELLOW}Manuel olarak sonlandırmak için:${NC} kill -9 <PID>"
+    echo -e "${RED}$error_count süreç durdurulamadı, manuel müdahale gerekebilir.${NC}"
+    exit 1
 fi 

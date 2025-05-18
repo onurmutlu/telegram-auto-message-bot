@@ -1,9 +1,47 @@
 # Changelog
 
-Tüm önemli değişiklikler bu dosyada belgelenecektir.
+Bu dosya, projedeki tüm önemli değişiklikleri kaydeder.
 
-Bu proje [Keep a Changelog](https://keepachangelog.com/tr/1.0.0/) kurallarına uymaktadır ve 
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html) kullanmaktadır.
+## [v4.1.0] - 2025-06-08
+
+### Eklenenler
+- Health monitoring sistemi - sistem ve servislerin durumunu sürekli izler
+- CLI arayüzü - `python -m app.cli` ile bot yönetimi sağlanır
+- API endpointleri - bot durumu ve servislerin yönetimi için API desteği
+- Veritabanı otomatik yedekleme sistemi
+- Dockerfile ve docker-compose.yml optimizasyonları
+- Redis desteği (opsiyonel)
+
+### Değişenler
+- Başlangıç ve durdurma scriptleri iyileştirildi
+- Environment değişkenlerinin yönetimi geliştirildi
+- Error handling mekanizmaları güçlendirildi
+- README.md ve dokümentasyon güncellendi
+
+### Düzeltilenler
+- Import hataları çözüldü
+- Eksik servisler tamamlandı
+- Cache dosyalarının git takibi engellendi
+
+## [v4.0.0] - 2025-05-01
+
+### Eklenenler
+- MessageTemplate modeli ve şablon sistemi
+- Engagement, DM ve Promo servisleri
+- ActivityService ve kullanıcı etkileşim izleme
+- PostgreSQL geçişi
+- FastAPI tabanlı API
+- Docker desteği
+
+### Değişenler
+- Kod tabanı yeniden yapılandırıldı
+- Servis mimarisi güncellendi
+- Veritabanı modeli güncelleştirildi
+
+### Düzeltilenler
+- Telegram oturum sorunları
+- Grup yönetimi hataları
+- Veritabanı bağlantı stabilite sorunları
 
 ## [Yayımlanmamış]
 

@@ -18,7 +18,7 @@ class User(BaseModel, table=True):
     is_active: bool = Field(default=True)
     
     # İstatistikler
-    last_activity: Optional[datetime] = None
+    last_activity_at: Optional[datetime] = Field(default=None, alias="last_activity") # last_activity -> last_activity_at olarak değiştirildi ve alias eklendi
     message_count: int = Field(default=0)
     
     # Relationships
@@ -36,4 +36,4 @@ class User(BaseModel, table=True):
             return f"User {self.user_id}"
             
     def __repr__(self) -> str:
-        return f"<User {self.full_name()} ({self.user_id})>" 
+        return f"<User {self.full_name()} ({self.user_id})>"

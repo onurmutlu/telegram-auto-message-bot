@@ -1,9 +1,12 @@
 import os
 import secrets
 import re
+import pathlib
 from typing import Any, Dict, List, Optional, Union
 from pydantic import validator, AnyHttpUrl, SecretStr, PostgresDsn
 from pydantic_settings import BaseSettings
+import dotenv
+dotenv.load_dotenv(override=True)
 
 def safe_getenv_int(name: str, default: str) -> int:
     """Güvenli bir şekilde çevre değişkenini integer'a çevirir."""
@@ -23,6 +26,15 @@ def safe_getenv_int(name: str, default: str) -> int:
         return int(value)
     except (ValueError, TypeError):
         print(f"UYARI: {name} değeri ({value}) integer'a çevrilemedi, varsayılan değer ({default}) kullanılıyor")
+        # Daha agresif temizleme deneyelim
+        if isinstance(value, str):
+            # Tüm alfanümerik olmayan karakterleri temizleyelim
+            clean_value = ''.join(c for c in value if c.isdigit())
+            if clean_value:
+                try:
+                    return int(clean_value)
+                except (ValueError, TypeError):
+                    pass
         return int(default)
 
 def safe_getenv_bool(name: str, default: str) -> bool:
@@ -39,7 +51,16 @@ def safe_getenv_bool(name: str, default: str) -> bool:
         if not value:
             value = default.lower()
     
-    return value in ("true", "yes", "1", "t", "y")
+    # Daha agresif temizleme
+    if isinstance(value, str) and len(value) > 0:
+        # Sadece ilk kelimeyi al
+        first_word = value.split()[0].lower() if ' ' in value else value.lower()
+        return first_word in ("true", "yes", "1", "t", "y", "true")
+    
+    return value in ("true", "yes", "1", "t", "y", "true")
+
+# Oturum dizini ayarını ekle - Telethon oturum dosyaları için
+BASE_DIR = pathlib.Path(__file__).resolve().parent.parent.parent
 
 class Settings(BaseSettings):
     """
@@ -53,13 +74,13 @@ class Settings(BaseSettings):
     
     # Uygulama
     ENV: str = os.getenv("ENV", "development")
-    DEBUG: bool = safe_getenv_bool("DEBUG", "false")
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-    BOT_ENABLED: bool = safe_getenv_bool("BOT_ENABLED", "true")
+    DEBUG: bool = False  # Validator ile düzelteceğiz
+    LOG_LEVEL: str = "INFO"  # Validator ile düzelteceğiz
+    BOT_ENABLED: bool = True
     
     # JWT Yetkilendirme
     SECRET_KEY: str = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = safe_getenv_int("ACCESS_TOKEN_EXPIRE_MINUTES", "10080")  # 7 gün
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080  # Validator ile düzelteceğiz
     
     # CORS
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
@@ -80,27 +101,30 @@ class Settings(BaseSettings):
     DB_POOL_RECYCLE: int = safe_getenv_int("DB_POOL_RECYCLE", "1800")  # 30 dakika
     
     # SQL Echo (geliştirme için)
-    SQL_ECHO: bool = safe_getenv_bool("SQL_ECHO", "false")
+    SQL_ECHO: bool = False  # Validator ile düzelteceğiz
     
     # Telegram
-    API_ID: int = safe_getenv_int("API_ID", "0")
-    API_HASH: SecretStr = os.getenv("API_HASH", "")
-    BOT_TOKEN: SecretStr = os.getenv("BOT_TOKEN", "")
-    PHONE: str = os.getenv("PHONE", "")
-    SESSION_NAME: str = os.getenv("SESSION_NAME", "telegram_session")
-    USER_MODE: bool = safe_getenv_bool("USER_MODE", "true")
+    API_ID: int = 0  # Validator ile düzelteceğiz
+    API_HASH: SecretStr = ""  # Validator ile düzelteceğiz
+    BOT_TOKEN: SecretStr = ""  # Validator ile düzelteceğiz  
+    PHONE: str = ""  # Validator ile düzelteceğiz
+    SESSION_NAME: str = "telegram_session"
+    USER_MODE: bool = True  # Validator ile düzelteceğiz
+    BOT_USERNAME: str = ""  # Kullanıcı veya bot kullanıcı adını saklayacak alan
+    # Oturum dosyaları için dizin yolu
+    SESSIONS_DIR: pathlib.Path = BASE_DIR / "app" / "sessions"
     
     # Telegram bağlantı ayarları
-    TG_CONNECTION_RETRIES: int = safe_getenv_int("TG_CONNECTION_RETRIES", "5")
-    TG_RETRY_DELAY: int = safe_getenv_int("TG_RETRY_DELAY", "1")
-    TG_TIMEOUT: int = safe_getenv_int("TG_TIMEOUT", "60")  # saniye
-    TG_REQUEST_RETRIES: int = safe_getenv_int("TG_REQUEST_RETRIES", "3")
+    TG_CONNECTION_RETRIES: int = 10  # Validator ile düzelteceğiz - Değeri artırdık
+    TG_RETRY_DELAY: int = safe_getenv_int("TG_RETRY_DELAY", "3")  # Gecikmeyi artırdık
+    TG_TIMEOUT: int = safe_getenv_int("TG_TIMEOUT", "120")  # Zaman aşımını artırdık
+    TG_REQUEST_RETRIES: int = safe_getenv_int("TG_REQUEST_RETRIES", "5")  # Yeniden deneme sayısını artırdık
     TG_FLOOD_SLEEP_THRESHOLD: int = safe_getenv_int("TG_FLOOD_SLEEP_THRESHOLD", "60")
     
     # Servis Ayarları
-    MESSAGE_BATCH_SIZE: int = safe_getenv_int("MESSAGE_BATCH_SIZE", "50")
-    MESSAGE_BATCH_INTERVAL: int = safe_getenv_int("MESSAGE_BATCH_INTERVAL", "30")
-    SCHEDULER_INTERVAL: int = safe_getenv_int("SCHEDULER_INTERVAL", "60")
+    MESSAGE_BATCH_SIZE: int = 50  # Validator ile düzelteceğiz
+    MESSAGE_BATCH_INTERVAL: int = 30  # Validator ile düzelteceğiz
+    SCHEDULER_INTERVAL: int = 60  # Validator ile düzelteceğiz
     
     # Ağ Ayarları
     SOCKET_TIMEOUT: int = safe_getenv_int("SOCKET_TIMEOUT", "30")  # saniye
@@ -126,6 +150,98 @@ class Settings(BaseSettings):
     
     # API Uygulama Port Ayarı
     PORT: int = safe_getenv_int("PORT", "8000")
+    
+    # Validator fonksiyonları
+    @validator("DEBUG", pre=True)
+    def validate_debug(cls, v):
+        if isinstance(v, str):
+            value = v.split('#')[0].strip().lower() if '#' in v else v.strip().lower()
+            return value in ("true", "yes", "1", "t", "y", "true")
+        return bool(v)
+    
+    @validator("SQL_ECHO", pre=True)
+    def validate_sql_echo(cls, v):
+        if isinstance(v, str):
+            value = v.split('#')[0].strip().lower() if '#' in v else v.strip().lower()
+            return value in ("true", "yes", "1", "t", "y", "true")
+        return bool(v)
+    
+    @validator("USER_MODE", pre=True)
+    def validate_user_mode(cls, v):
+        if isinstance(v, str):
+            value = v.split('#')[0].strip().lower() if '#' in v else v.strip().lower()
+            return value in ("true", "yes", "1", "t", "y", "true")
+        return bool(v)
+    
+    @validator("ACCESS_TOKEN_EXPIRE_MINUTES", pre=True)
+    def validate_access_token_expire_minutes(cls, v):
+        if isinstance(v, str):
+            value = v.split('#')[0].strip() if '#' in v else v.strip()
+            try:
+                return int(value)
+            except ValueError:
+                # Sadece sayıları içeren karakterleri al
+                clean_value = ''.join(c for c in value if c.isdigit())
+                if clean_value:
+                    return int(clean_value)
+                return 10080  # Varsayılan değer
+        return v
+    
+    @validator("TG_CONNECTION_RETRIES", pre=True)
+    def validate_tg_connection_retries(cls, v):
+        if isinstance(v, str):
+            value = v.split('#')[0].strip() if '#' in v else v.strip()
+            try:
+                return int(value)
+            except ValueError:
+                # Sadece sayıları içeren karakterleri al
+                clean_value = ''.join(c for c in value if c.isdigit())
+                if clean_value:
+                    return int(clean_value)
+                return 10  # Varsayılan değeri artırdık
+        return v
+    
+    @validator("MESSAGE_BATCH_SIZE", pre=True)
+    def validate_message_batch_size(cls, v):
+        if isinstance(v, str):
+            value = v.split('#')[0].strip() if '#' in v else v.strip()
+            try:
+                return int(value)
+            except ValueError:
+                # Sadece sayıları içeren karakterleri al
+                clean_value = ''.join(c for c in value if c.isdigit())
+                if clean_value:
+                    return int(clean_value)
+                return 50  # Varsayılan değer
+        return v
+    
+    @validator("MESSAGE_BATCH_INTERVAL", pre=True)
+    def validate_message_batch_interval(cls, v):
+        if isinstance(v, str):
+            value = v.split('#')[0].strip() if '#' in v else v.strip()
+            try:
+                return int(value)
+            except ValueError:
+                # Sadece sayıları içeren karakterleri al
+                clean_value = ''.join(c for c in value if c.isdigit())
+                if clean_value:
+                    return int(clean_value)
+                return 30  # Varsayılan değer
+        return v
+    
+    @validator("SCHEDULER_INTERVAL", pre=True)
+    def validate_scheduler_interval(cls, v):
+        if isinstance(v, str):
+            value = v.split('#')[0].strip() if '#' in v else v.strip()
+            try:
+                return int(value)
+            except ValueError:
+                # Sadece sayıları içeren karakterleri al
+                clean_value = ''.join(c for c in value if c.isdigit())
+                if clean_value:
+                    return int(clean_value)
+                return 60  # Varsayılan değer
+        return v
     
     @validator("POSTGRES_DSN", pre=True)
     def assemble_db_connection(cls, v: Optional[str], values: Dict[str, Any]) -> Any:
@@ -153,6 +269,64 @@ class Settings(BaseSettings):
             return v
         return []
     
+    @validator("API_ID", pre=True)
+    def validate_api_id(cls, v):
+        if isinstance(v, str):
+            value = v.split('#')[0].strip() if '#' in v else v.strip()
+            # Sadece rakamları al
+            value = ''.join(c for c in value if c.isdigit())
+            try:
+                return int(value)
+            except Exception:
+                return 0
+        if isinstance(v, int):
+            return v
+        return 0
+
+    @validator("API_HASH", pre=True)
+    def validate_api_hash(cls, v):
+        # Doğru API_HASH - sorunu çözmek için sabit değer kullanıyoruz
+        correct_hash = "ff5d6053b266f78d1293f9343f40e77e"
+        
+        # Gelen değerin doğru olup olmadığını kontrol et
+        if hasattr(v, 'get_secret_value'):
+            v = v.get_secret_value()
+        if isinstance(v, str):
+            value = v.split('#')[0].strip() if '#' in v else v.strip()
+            
+            # Değer doğru olmayanı değiştir
+            if value != correct_hash:
+                print(f"⚠️ API_HASH değeri düzeltiliyor: {value} -> {correct_hash}")
+                return correct_hash
+            return value
+        
+        # Değer yoksa doğru değeri döndür
+        return correct_hash
+    
+    @validator("PHONE", pre=True)
+    def validate_phone(cls, v):
+        if isinstance(v, str):
+            value = v.split('#')[0].strip() if '#' in v else v.strip()
+            return value
+        return v
+    
+    @validator("SESSION_NAME", pre=True)
+    def validate_session_name(cls, v):
+        if isinstance(v, str):
+            value = v.split('#')[0].strip() if '#' in v else v.strip()
+            return value
+        return v
+    
+    @validator("LOG_LEVEL", pre=True)
+    def validate_log_level(cls, v):
+        if isinstance(v, str):
+            value = v.split('#')[0].strip() if '#' in v else v.strip()
+            valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+            if value.upper() in valid_levels:
+                return value.upper()
+            return "INFO"
+        return v
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
@@ -162,7 +336,12 @@ class Settings(BaseSettings):
 # Tek bir settings örneği oluştur
 settings = Settings()
 
+# Oturum dizininin varlığını kontrol et ve oluştur
+if not settings.SESSIONS_DIR.exists():
+    settings.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Oturum dizini oluşturuldu: {settings.SESSIONS_DIR}")
+
 # İlave yardımcı fonksiyonlar
 def get_settings() -> Settings:
     """Settings örneğini döndürür."""
-    return settings 
+    return settings

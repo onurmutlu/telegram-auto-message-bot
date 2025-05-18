@@ -39,6 +39,17 @@ def get_session() -> Generator[Session, None, None]:
         logger.error(f"Veritabanı oturumu oluşturulurken hata: {e}")
         # Hatayı yeniden fırlat (daha yüksek seviyedeki kod ele almalı)
         raise
+
+# FastAPI uyumlu veritabanı oturumu sağlayan fonksiyon
+def get_db():
+    """FastAPI uyumlu veritabanı oturumu sağlar (dependency)."""
+    from sqlmodel import Session
+    try:
+        with Session(engine) as session:
+            yield session
+    except Exception as e:
+        logger.error(f"get_db oturumu oluşturulurken hata: {e}")
+        raise
         
 # Tabloları oluştur
 def create_db_and_tables() -> None:
@@ -64,11 +75,12 @@ def init_db() -> None:
             from app.models import User
             
             admin = User(
+                user_id=0,  # admin kullanıcısı için varsayılan user_id
                 username="admin",
                 first_name="Admin",
-                is_active=True,
-                is_superuser=True
+                is_active=True
+                # is_superuser=True kaldırıldı, modelde yok
             )
             
             session.add(admin)
-            session.commit() 
+            session.commit()

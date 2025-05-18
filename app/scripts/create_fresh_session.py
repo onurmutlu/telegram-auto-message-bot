@@ -22,6 +22,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# CLI modülünden çağrılabilen async fonksiyon
+async def create_session(session_name="bot_session_clean"):
+    """CLI için async wrapper"""
+    return create_new_session(session_name)
+
 def create_new_session(session_name="bot_session_clean"):
     """Belirtilen adla temiz bir oturum dosyası oluşturur"""
     try:

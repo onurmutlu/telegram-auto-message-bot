@@ -35,32 +35,28 @@
     "Harika bir hafta sonu geçirmenizi dileriz! Bu hafta sonu için özel önerileriniz varsa paylaşabilirsiniz."
   ],
   "welcome": [
-    "Aramıza yeni katılan üyelerimiz var! Hepinize hoş geldiniz diyoruz. 👋",
-    "Yeni üyelerimize merhaba! Kendinizi tanıtmak ister misiniz?",
-    "Gruba yeni katılan arkadaşlarımız, hoş geldiniz! Kurallarımızı incelemeyi unutmayın.",
-    "Aramıza katılan yeni üyelerimize sıcak bir merhaba! 🤗",
-    "Yeni üyelerimiz, grubumuza hoş geldiniz! Sorularınız için yöneticilerimize ulaşabilirsiniz."
+    "Aramıza hoş geldin! Kendini tanıtmak ister misin?",
+    "Yeni üyemiz var! Hoş geldin, burada olmandan mutluyuz.",
+    "Gruba katıldığın için teşekkürler! Kendinden bahseder misin?",
+    "Yeni bir arkadaşımız var! Hoş geldin, seni tanımak isteriz."
   ],
   "reminder": [
-    "Hatırlatma: Yarın grubumuzda canlı soru-cevap etkinliği olacak, katılımınızı bekliyoruz!",
-    "Hatırlatma: Grup kurallarımıza uygun paylaşımlar yaparak herkese saygılı olmayı unutmayın.",
-    "Hatırlatma: Haftalık anketimize katılmayı unutmayın, fikirleriniz bizim için değerli!",
-    "Hatırlatma: Yarın başlayacak indirim kampanyamızdan haberdar olmak için bildirimlerinizi açık tutun.",
-    "Hatırlatma: Bu hafta içinde yapacağımız çekilişe katılmak için mesajı sabitleyip emoji bırakmanız yeterli!"
+    "Unutmayın, yarın son başvuru tarihi!",
+    "Hatırlatma: Bu hafta önemli etkinliğimiz var.",
+    "Yaklaşan etkinliğimizi kaçırmayın! Detaylar için link:",
+    "Son kayıt tarihi yaklaşıyor, katılmak isteyenler için hatırlatma."
   ],
   "holiday": [
-    "Bayramınız kutlu olsun! Nice bayramlar geçirmeniz dileğiyle. 🎉",
-    "Yeni yılınız kutlu olsun! 2026'nın herkese sağlık ve mutluluk getirmesini dileriz. 🎄",
-    "Tüm grup üyelerimizin Ramazan Bayramı mübarek olsun! ✨",
-    "Milli bayramımız kutlu olsun! 🇹🇷",
-    "Tatil günü nedeniyle bugün özel içeriklerimizi paylaşacağız, takipte kalın!"
+    "Bayramınız kutlu olsun! Nice güzel bayramlara.",
+    "Yeni yılınız kutlu olsun! 2025 herkese sağlık, mutluluk ve başarı getirsin.",
+    "Bu özel günde herkese mutluluklar dilerim!",
+    "Tatil planlarınız neler? Paylaşmak isterseniz bekliyoruz."
   ],
   "question": [
-    "Bugünün sorusu: Şu an okumakta olduğunuz bir kitap var mı? Varsa adını bizimle paylaşır mısınız?",
-    "Gruba soruyoruz: Telegram'ın en sevdiğiniz özelliği nedir?",
-    "Fikrinizi merak ediyoruz: Gelecek hafta hangi konuda içerik görmek istersiniz?",
-    "Günün anketi: Sesli mesaj mı, yazılı mesaj mı? Hangisini tercih edersiniz?",
-    "Sizce yapay zeka uygulamaları hayatımızı nasıl etkileyecek? Düşüncelerinizi paylaşır mısınız?"
+    "Bu konuda ne düşünüyorsunuz?",
+    "Sizce hangi yöntem daha etkili?",
+    "Benzer bir deneyim yaşayan var mı?",
+    "Bu sorunla ilgili önerileriniz neler?"
   ],
   "motivation": [
     "Başarı, düştükten sonra her seferinde yeniden ayağa kalkmaktır. Motivasyonunuzu yüksek tutun! 💪",
@@ -70,39 +66,21 @@
     "Her gün yeni bir öğrenme fırsatıdır. Bugün kendiniz için ne öğrendiniz?"
   ],
   "tips": [
-    "Bot İpucu: Komutların tam listesini görmek için /help yazabilirsiniz.",
-    "Grup İpucu: Mesajlara uzun basarak birden fazla mesaj seçebilir ve toplu işlem yapabilirsiniz.",
-    "Güvenlik İpucu: Şüpheli bağlantılara tıklamadan önce mutlaka kontrol edin.",
-    "Telegram İpucu: Önemli mesajları kaydedilmiş mesajlara ekleyerek daha sonra kolayca bulabilirsiniz.",
-    "Bot İpucu: Özel komutları denemek için botla direkt mesajlaşabilirsiniz."
+    "İşte size küçük bir ipucu: Günlük hedefler belirlemek motivasyonunuzu artırır.",
+    "Biliyor muydunuz? Düzenli su içmek konsantrasyonunuzu artırır.",
+    "Verimli çalışma için: Pomodoro tekniğini deneyin - 25 dakika çalışıp 5 dakika mola verin.",
+    "Haftalık planlamanızı Pazar günü yaparsanız haftaya daha hazırlıklı başlarsınız."
   ],
   "engage": [
-    "👋 Hey! Grupta kimler aktif? Bir merhaba diyin bakalım! 💬",
-    "😊 Bugün canınız sıkılıyor mu? Benimle sohbet etmek isteyen var mı? DM atabilirsiniz!",
-    "🔥 Grubun en aktif üyesi kim? Cevap veren ilk 3 kişiye özel sürprizlerimiz var! 🎁",
-    "💭 Aklınızda bir soru mu var? Özelden bana sorabilirsiniz, yardımcı olmak için buradayım!",
-    "🌟 Bugün kendini şanslı hisseden var mı? Bana DM atan 10. kişiye özel bir hediye vereceğim!",
-    "📱 Yeni telefon önerileri arayan var mı? Bana özelden yazın, size en iyisini bulalım! 🔍",
-    "🎮 Oyunseverler el kaldırsın! Hangi oyunları oynuyorsunuz? Özelden yazın, önerilerim var!",
-    "☕ Kahve molası zamanı! Kimler müsait sohbet için? Bana DM atın, rahatça konuşalım.",
-    "🎵 Müzik önerisi arayan var mı? En sevdiğiniz şarkıyı yazın veya bana özelden müzik zevkinizden bahsedin!",
-    "🍕 Acıkanlar? Yemek siparişi vermeden önce bana DM atın, indirim kodlarım var!",
-    "💡 Aklında parlak bir fikir mi var? Benimle özel olarak paylaşmak ister misin? DM'lerim açık!",
-    "🎬 Film önerisi isteyen var mı? Tarzını özelden yaz, sana özel liste hazırlayayım!",
-    "📊 Grubumuzun en aktif saatini tahmin edin! Doğru cevabı bilene sürpriz hediyem var 🎁",
-    "🧩 Bugün kafa dağıtmak isteyenler? Özelden yazın, eğlenceli bir aktivite önereyim!",
-    "❓ Grupta cevaplayamadığınız sorular mı var? Bana özelden ulaşın, yardımcı olayım!"
+    "Merhaba! Bugün nasılsınız?",
+    "Gruba hoş geldiniz! Burada olduğunuz için mutluyuz.",
+    "Herkese iyi günler! Bugün neler yapıyorsunuz?",
+    "Selam! Yeni projeleriniz nasıl gidiyor?"
   ],
   "dm_invite": [
-    "💬 Sohbet etmek isteyen var mı? Bana DM atabilirsiniz, her konuda konuşabiliriz! 😊",
-    "🤔 Aklınıza takılan bir soru mu var? Bana özelden sorabilirsiniz, memnuniyetle yardımcı olurum!",
-    "👀 Grubun gürültüsünden sıkıldınız mı? Daha sakin bir sohbet için DM'lerim açık!",
-    "🔒 Gizli kalmak istediğiniz konular için bana özelden yazabilirsiniz, gizliliğinize önem veriyorum!",
-    "🎁 Özel indirim kodları ve fırsatlar için bana DM atın! Sadece size özel teklifler sunuyorum!",
-    "🆘 Yardıma mı ihtiyacınız var? Bana özelden ulaşın, sorununuzu çözmek için elimden geleni yapacağım!",
-    "🎯 Hedeflerinize ulaşmak için özel tavsiyelere mi ihtiyacınız var? Bana DM'den detayları anlatın!",
-    "🔍 Bir şey mi arıyorsunuz? Bana özelden yazın, birlikte bulalım!",
-    "📝 Grup hakkında geri bildiriminiz mi var? Bana DM'den iletebilirsiniz, her öneri değerlidir!",
-    "🌟 VIP üyelik hakkında bilgi almak için bana özelden yazın, ayrıcalıklardan yararlanın!"
+    "Merhaba! Özel bir konuda görüşmek ister misiniz?",
+    "Selamlar! Size özel bir teklifim var, DM'den yazabilir miyim?",
+    "Merhaba, size özel bir bilgi paylaşmak istiyorum. Müsait misiniz?",
+    "Selam! Özel mesaj gönderebilir miyim? Önemli bir konu hakkında konuşmak istiyorum."
   ]
 } 

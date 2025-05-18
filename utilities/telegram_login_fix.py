@@ -3,14 +3,24 @@
 """
 Telegram oturumunu doğrudan açan script.
 app/core/unified/client.py yerine doğrudan TelegramClient kullanır.
+
+V2: API_HASH değerini düzeltme ve oturum dosyalarını temizleme eklendi.
 """
 
 import asyncio
 import logging
 import os
 import sys
+import shutil
 from telethon import TelegramClient, functions, types
 from telethon.errors import SessionPasswordNeededError
+
+# Renk kodları
+GREEN = '\033[92m'
+YELLOW = '\033[93m'
+RED = '\033[91m'
+BLUE = '\033[94m'
+RESET = '\033[0m'
 
 # Log yapılandırması
 logging.basicConfig(

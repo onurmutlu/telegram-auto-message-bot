@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional, List, Union
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.base_service import BaseService
-from app.db.session import get_db
+from app.db.session import get_session
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class UserService(BaseService):
     
     async def initialize(self):
         """Servisi başlat."""
-        self.db = self.db or await get_db().__anext__()
+        self.db = self.db or next(get_session())
         logger.info("UserService initialized")
         return True
     

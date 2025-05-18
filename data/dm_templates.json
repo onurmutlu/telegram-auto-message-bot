@@ -57,12 +57,35 @@
     "İlgi alanlarınıza göre size özel bir grup önerim var: t.me/ozel_grup 🌈 Bu grup tam size göre!",
     "Bahsettiğiniz konudaki en yeni güncellemeleri paylaştığımız kanal: t.me/guncel_kanal 📱 Kaçırmayın!"
   ],
+  "greeting": [
+    "Merhaba! Nasılsınız?",
+    "Selam! Sizi grubumuzda görmek güzel.",
+    "Merhaba! Sizinle tanışmak istiyorum.",
+    "İyi günler! Nasıl yardımcı olabilirim?"
+  ],
+  "intro": [
+    "Ben [İsim], grubun yöneticisiyim.",
+    "Grubumuzda aktif olduğunuzu gördüm ve tanışmak istedim.",
+    "Sizinle özel bir konuda görüşmek istedim.",
+    "Merhaba, ben grubun moderatörlerinden biriyim."
+  ],
+  "offer": [
+    "Size özel bir teklifimiz var. İlgilenir misiniz?",
+    "Yeni başlattığımız programdan haberdar etmek istedim.",
+    "Grubumuzun premium üyeliği hakkında bilgi vermek isterim.",
+    "Yaklaşan etkinliğimize katılmak ister misiniz?"
+  ],
   "follow_up": [
-    "Az önce gönderdiğim grup linkine göz attınız mı? 👀 Orada çok aktif bir topluluk sizi bekliyor! t.me/aktif_topluluk 🔝",
-    "Hatırlatmak istedim - şu grubumuza da katılarak daha fazla fayda sağlayabilirsiniz: t.me/faydali_grup 💡",
-    "Bu arada, bahsettiğim premium kanalımıza katılım için son gün bugün! 🕒 Fırsatı kaçırmayın: t.me/son_firsat 🎯",
-    "Ayrıca bu hafta sonu özel bir etkinliğimiz olacak! 📅 Katılmak için şu kanala göz atın: t.me/haftasonu_etkinlik 🎪",
-    "Unutmadan söyleyeyim, yaklaşan webinarımıza kayıt için: t.me/webinar_kayit 📊 İlk kayıt olanlara özel hediyeler var!"
+    "Mesajımı aldınız mı? Yanıtınızı bekliyorum.",
+    "Dün bahsettiğim konu hakkında ne düşünüyorsunuz?",
+    "Teklifimizle ilgili karar verdiniz mi?",
+    "Sorularınız varsa yanıtlamaktan memnuniyet duyarım."
+  ],
+  "thanks": [
+    "İlginiz için teşekkür ederim!",
+    "Yanıtınız için teşekkürler.",
+    "Vakit ayırdığınız için teşekkür ederim.",
+    "Desteğiniz için teşekkürler!"
   ],
   "engagement_response": [
     "Harika bir soru sordunuz! 👏 Bu konuyu derinlemesine tartıştığımız grup için: t.me/derinlemesine_tartisma 🧐",

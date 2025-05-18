@@ -1,0 +1,10 @@
+BOT DURUM KONTROL
+==================================================
+API ID: 23692263
+API HASH: ff5d...e77e
+Oturum: /Users/siyahkare/code/telegram-bot/app/sessions/telegram_session
+Bağlanılıyor...
+Bağlantı: TAMAM
+Oturum Açık: HAYIR
+
+Bağlantı kapatıldı.

@@ -1,165 +1,101 @@
 version: '3.8'
 
 services:
-  # PostgreSQL veritabanı
-  db:
-    image: postgres:14-alpine
-    container_name: telegram_db
-    restart: unless-stopped
+  postgres:
+    image: postgres:15-alpine
+    container_name: telegram-bot-postgres
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
       POSTGRES_DB: ${DB_NAME:-telegram_bot}
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./data/postgres:/docker-entrypoint-initdb.d
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-telegram_bot}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
     networks:
-      - telegram_network
+      - bot-network
 
-  # Alembic Migrations
-  alembic:
+  redis:
+    image: redis:7-alpine
+    container_name: telegram-bot-redis
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - bot-network
+
+  telegram-bot:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime
-    image: telegram-bot:latest
-    container_name: telegram_alembic
-    depends_on:
-      db:
-        condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_USER=${DB_USER:-postgres}
-      - DB_PASSWORD=${DB_PASSWORD:-postgres}
-      - DB_NAME=${DB_NAME:-telegram_bot}
+    container_name: telegram-bot
     volumes:
       - ./app:/app/app
-      - ./alembic.ini:/app/alembic.ini
-    command: ["alembic", "upgrade", "head"]
-    networks:
-      - telegram_network
-
-  # Telegram Bot API (FastAPI uygulama)
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: runtime
-    image: telegram-bot:latest
-    container_name: telegram_app
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-      alembic:
-        condition: service_completed_successfully
+      - ./runtime:/app/runtime
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./session:/app/session
     env_file:
       - .env
     environment:
-      - DB_HOST=db
-      - DB_PORT=5432
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+      - TZ=Europe/Istanbul
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - bot-network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: telegram-bot-api
+    command: python -m app.api.main
     volumes:
-      - ./sessions:/app/sessions
-      - ./logs:/app/logs
-    command: ["python", "-m", "app.api.main"]
+      - ./app:/app/app
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+      - TZ=Europe/Istanbul
+      - ENABLE_API=true
     ports:
       - "${API_PORT:-8000}:8000"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    networks:
-      - telegram_network
-    
-  # Scheduler - Zamanlanmış görevler
-  scheduler:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: runtime
-    image: telegram-bot:latest
-    container_name: telegram_scheduler
-    restart: unless-stopped
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
-      app:
+      redis:
         condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      - DB_HOST=db
-      - DB_PORT=5432
-    volumes:
-      - ./sessions:/app/sessions
-      - ./logs:/app/logs
-    command: ["python", "-m", "app.scheduler"]
-    networks:
-      - telegram_network
-
-  # Telegram Client 
-  client:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: runtime
-    image: telegram-bot:latest
-    container_name: telegram_client
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-      app:
-        condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      - SESSION_NAME=${SESSION_NAME:-telegram_session}
-      - DB_HOST=db
-      - DB_PORT=5432
-    volumes:
-      - ./sessions:/app/sessions
-      - ./logs:/app/logs
-    command: ["python", "-m", "app.client"]
     networks:
-      - telegram_network
-
-  # Web Panel (Next.js)
-  web:
-    build:
-      context: ./web
-      dockerfile: Dockerfile
-    image: telegram-web:latest
-    container_name: telegram_web
-    restart: unless-stopped
-    depends_on:
-      app:
-        condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      - NEXT_PUBLIC_API_URL=http://app:8000
-    ports:
-      - "${WEB_PORT:-3000}:3000"
-    networks:
-      - telegram_network
+      - bot-network
 
 volumes:
   postgres_data:
-    name: telegram_postgres_data
+  redis_data:
 
 networks:
-  telegram_network:
-    name: telegram_network
+  bot-network:
     driver: bridge

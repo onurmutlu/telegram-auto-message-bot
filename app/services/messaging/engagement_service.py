@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 import asyncio
 import random
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +14,7 @@ from telethon.errors import (
 )
 
 from app.core.config import settings
-from app.db.session import get_db
+from app.db.session import get_session
 from app.models.group import Group
 from app.models.message import Message
 from app.models.message_template import MessageTemplate
@@ -58,7 +58,7 @@ class EngagementService(BaseService):
     
     async def initialize(self):
         """Servisi başlat ve mesaj şablonlarını yükle."""
-        self.db = self.db or await get_db().__anext__()
+        self.db = self.db or next(get_session())
         self.activity_service = ActivityService(db=self.db)
         await self.activity_service.initialize()
         await self._load_message_templates()

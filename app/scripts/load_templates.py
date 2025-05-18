@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.db.session import get_db
+from app.db.session import get_session
 from app.core.config import settings
 from app.models.message_template import MessageTemplate
 
@@ -62,35 +62,35 @@ async def load_engagement_templates(db: AsyncSession):
             
             for template in templates:
                 # Şablonu veritabanında kontrol et
-                query = """
+                query = text("""
                     SELECT id FROM message_templates 
                     WHERE content = :content AND type = :type
-                """
-                result = await db.execute(query, {"content": template, "type": category})
+                """)
+                result = db.execute(query, {"content": template, "type": category})
                 existing = result.fetchone()
                 
                 if not existing:
                     # Şablon yoksa ekle
-                    query = """
+                    query = text("""
                         INSERT INTO message_templates (
                             content, type, engagement_rate, is_active, created_at, updated_at
                         ) VALUES (
                             :content, :type, :engagement_rate, true, NOW(), NOW()
                         )
-                    """
-                    await db.execute(query, {
+                    """)
+                    db.execute(query, {
                         "content": template,
                         "type": category if category != "engage" else "engagement",
                         "engagement_rate": engagement_rate
                     })
                     count += 1
         
-        await db.commit()
+        db.commit()
         logger.info(f"{count} engagement şablonu yüklendi.")
         
     except Exception as e:
         logger.error(f"Engagement şablonları yüklenirken hata: {str(e)}", exc_info=True)
-        await db.rollback()
+        db.rollback()
 
 async def load_dm_templates(db: AsyncSession):
     """DM şablonlarını yükle."""
@@ -104,35 +104,35 @@ async def load_dm_templates(db: AsyncSession):
         for category, templates in templates_data.items():
             for template in templates:
                 # Şablonu veritabanında kontrol et
-                query = """
+                query = text("""
                     SELECT id FROM message_templates 
                     WHERE content = :content AND type = :type
-                """
-                result = await db.execute(query, {"content": template, "type": f"dm_{category}"})
+                """)
+                result = db.execute(query, {"content": template, "type": f"dm_{category}"})
                 existing = result.fetchone()
                 
                 if not existing:
                     # Şablon yoksa ekle
-                    query = """
+                    query = text("""
                         INSERT INTO message_templates (
                             content, type, engagement_rate, is_active, created_at, updated_at
                         ) VALUES (
                             :content, :type, :engagement_rate, true, NOW(), NOW()
                         )
-                    """
-                    await db.execute(query, {
+                    """)
+                    db.execute(query, {
                         "content": template,
                         "type": f"dm_{category}",
                         "engagement_rate": 0.7  # DM şablonları için varsayılan değer
                     })
                     count += 1
         
-        await db.commit()
+        db.commit()
         logger.info(f"{count} DM şablonu yüklendi.")
         
     except Exception as e:
         logger.error(f"DM şablonları yüklenirken hata: {str(e)}", exc_info=True)
-        await db.rollback()
+        db.rollback()
 
 async def load_promo_templates(db: AsyncSession):
     """Tanıtım şablonlarını yükle."""
@@ -146,54 +146,54 @@ async def load_promo_templates(db: AsyncSession):
         for category, templates in templates_data.items():
             for template in templates:
                 # Şablonu veritabanında kontrol et
-                query = """
+                query = text("""
                     SELECT id FROM message_templates 
                     WHERE content = :content AND type = :type
-                """
-                result = await db.execute(query, {"content": template, "type": "promo" if "promo" in category else category})
+                """)
+                result = db.execute(query, {"content": template, "type": "promo" if "promo" in category else category})
                 existing = result.fetchone()
                 
                 if not existing:
                     # Şablon yoksa ekle
-                    query = """
+                    query = text("""
                         INSERT INTO message_templates (
                             content, type, engagement_rate, is_active, created_at, updated_at
                         ) VALUES (
                             :content, :type, :engagement_rate, true, NOW(), NOW()
                         )
-                    """
-                    await db.execute(query, {
+                    """)
+                    db.execute(query, {
                         "content": template,
                         "type": "promo" if "promo" in category else category,
                         "engagement_rate": 0.6  # Promo şablonları için varsayılan değer
                     })
                     count += 1
         
-        await db.commit()
+        db.commit()
         logger.info(f"{count} tanıtım şablonu yüklendi.")
         
     except Exception as e:
         logger.error(f"Tanıtım şablonları yüklenirken hata: {str(e)}", exc_info=True)
-        await db.rollback()
+        db.rollback()
 
 async def ensure_table_exists(db: AsyncSession):
     """message_templates tablosunun varlığını kontrol et ve gerekirse oluştur."""
     try:
         # Tablo var mı kontrol et
-        query = """
+        query = text("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
                 WHERE table_name = 'message_templates'
             );
-        """
-        result = await db.execute(query)
+        """)
+        result = db.execute(query)
         table_exists = result.scalar()
         
         if not table_exists:
             # Tablo yoksa oluştur
             logger.info("message_templates tablosu oluşturuluyor...")
             
-            create_table_query = """
+            create_table_query = text("""
                 CREATE TABLE IF NOT EXISTS message_templates (
                     id SERIAL PRIMARY KEY,
                     content TEXT NOT NULL,
@@ -203,23 +203,23 @@ async def ensure_table_exists(db: AsyncSession):
                     created_at TIMESTAMP DEFAULT NOW(),
                     updated_at TIMESTAMP DEFAULT NOW()
                 );
-            """
-            await db.execute(create_table_query)
-            await db.commit()
+            """)
+            db.execute(create_table_query)
+            db.commit()
             logger.info("message_templates tablosu oluşturuldu.")
         else:
             logger.info("message_templates tablosu zaten mevcut.")
             
     except Exception as e:
         logger.error(f"Tablo kontrolü sırasında hata: {str(e)}", exc_info=True)
-        await db.rollback()
+        db.rollback()
 
 async def main():
     """Ana fonksiyon."""
     logger.info("Şablon yükleme işlemi başlatılıyor...")
     
     # Veritabanı bağlantısı
-    db = await get_db().__anext__()
+    db = next(get_session())
     
     try:
         # Tablo kontrolü
@@ -235,7 +235,7 @@ async def main():
     except Exception as e:
         logger.error(f"Şablon yükleme işlemi sırasında hata: {str(e)}", exc_info=True)
     finally:
-        await db.close()
+        db.close()
 
 if __name__ == "__main__":
     asyncio.run(main()) 

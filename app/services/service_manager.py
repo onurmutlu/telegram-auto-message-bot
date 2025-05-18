@@ -287,9 +287,7 @@ class ServiceManager:
                     from app.services.messaging.dm_service import DirectMessageService
                     service = DirectMessageService(
                         client=self.client,
-                        config=self.config,
-                        db=self.db,
-                        stop_event=self.stop_event
+                        db=self.db
                     )
                     return service
                 except ImportError:
@@ -302,14 +300,23 @@ class ServiceManager:
                     from app.services.messaging.promo_service import PromoService
                     service = PromoService(
                         client=self.client,
-                        config=self.config,
-                        db=self.db,
-                        stop_event=self.stop_event
+                        db=self.db
                     )
                     return service
                 except ImportError:
                     logger.error("PromoService import edilemedi. İlgili modüller bulunamadı.")
                     return None
+
+            # InviteService için özel işlem
+            elif service_type == 'invite':
+                from app.services.invite_service import InviteService
+                service = InviteService(
+                    client=self.client,
+                    config=self.config,
+                    db=self.db,
+                    stop_event=self.stop_event
+                )
+                return service
                 
             # Diğer servis tipleri de eklenebilir
                 
@@ -331,7 +338,7 @@ class ServiceManager:
         results = {}
         
         # Temel servisleri oluştur ve yükle
-        service_types = ['message', 'group', 'user', 'gpt', 'dm', 'promo']
+        service_types = ['message', 'group', 'user', 'gpt', 'dm', 'promo', 'invite']
         
         for service_type in service_types:
             try:
