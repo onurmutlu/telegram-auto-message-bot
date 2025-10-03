@@ -41,14 +41,26 @@ class MessageAnalyticsService(BaseService):
     service_name = "message_analytics_service"
     default_interval = 600  # 10 dakika
     
-    def __init__(self, **kwargs):
+    def __init__(self, name='message_analytics_service', db=None, config=None, client=None, stop_event=None, *args, **kwargs):
         """
         MessageAnalyticsService sınıfının başlatıcısı.
         
         Args:
+            name: Servis adı
+            db: Veritabanı bağlantısı
+            config: Konfigürasyon nesnesi
+            client: Telegram client
+            stop_event: Durdurma eventi
             **kwargs: Temel servis parametreleri
         """
-        super().__init__(**kwargs)
+        super().__init__(name=name)
+        
+        # Servis bağımlılıkları
+        self.db = db
+        self.config = config
+        self.client = client
+        self.stop_event = stop_event
+        
         self.running = False
         self.initialized = False
         
@@ -65,6 +77,9 @@ class MessageAnalyticsService(BaseService):
         
         # Son rapor oluşturma zamanı
         self.last_report_time = datetime.now() - timedelta(days=1)
+        
+        # Diğer servisler
+        self.services = kwargs.get('services', {})
         
         logger.info(f"{self.service_name} oluşturuldu")
     

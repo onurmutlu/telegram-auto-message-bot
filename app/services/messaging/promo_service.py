@@ -766,17 +766,6 @@ class PromoService(BaseService):
         except Exception as e:
             logger.error(f"Error sending promo message to group {group_id}: {str(e)}", exc_info=True)
             return False
-            logger.warning(f"Admin permission required to post in group {group_id}")
-            return False
-            
-        except FloodWaitError as e:
-            wait_time = e.seconds
-            logger.warning(f"FloodWaitError: Need to wait {wait_time} seconds")
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error sending promo message to group {group_id}: {str(e)}", exc_info=True)
-            return False
     
     async def _update_campaign_status(self, campaign_id: int, sent_count: int):
         """

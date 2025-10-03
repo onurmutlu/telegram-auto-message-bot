@@ -20,8 +20,15 @@ logger = logging.getLogger(__name__)
 class InviteService(BaseService):
     """Davet servisi (app/services altında yeni yapı)."""
     
-    def __init__(self, client, config, db, stop_event=None):
-        super().__init__("invite", client, config, db, stop_event)
+    service_name = "invite_service"  # Servis adı tanımla
+    default_interval = 300  # 5 dakikada bir çalış
+    
+    def __init__(self, name='invite_service', client=None, db=None, config=None, stop_event=None, *args, **kwargs):
+        super().__init__(name=name)
+        self.client = client
+        self.db = db
+        self.config = config
+        self.stop_event = stop_event
         self.invite_batch_size = getattr(config, 'invite_batch_size', 50)
         self.last_message_times = {}
         self.sent_count = 0
@@ -37,7 +44,6 @@ class InviteService(BaseService):
         self.group_links = self._parse_group_links()
         self.invite_templates = self._load_invite_templates()
         self.running = True
-        self.stop_event = stop_event or asyncio.Event()
         self.services = {}
 
     def _setup_rate_limiter(self):
@@ -347,3 +353,10 @@ class InviteService(BaseService):
         self._can_invite_users = True
         logger.info("✅ Davet servisi kullanıcı hesabı ile çalışıyor, tüm özellikler etkin.")
         return True
+
+    async def _start(self):
+        pass
+    async def _stop(self):
+        pass
+    async def _update(self):
+        pass

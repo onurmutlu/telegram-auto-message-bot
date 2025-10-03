@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     # JWT Yetkilendirme
     SECRET_KEY: str = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080  # Validator ile düzelteceğiz
+    ALGORITHM: str = "HS256"  # JWT algoritması
+    
+    # API Güvenliği
+    API_AUTH_ENABLED: bool = safe_getenv_bool("API_AUTH_ENABLED", "true")
+    API_USERNAME: str = os.getenv("API_USERNAME", "admin")
+    API_PASSWORD: str = os.getenv("API_PASSWORD", "admin")
     
     # CORS
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
@@ -126,6 +132,11 @@ class Settings(BaseSettings):
     MESSAGE_BATCH_INTERVAL: int = 30  # Validator ile düzelteceğiz
     SCHEDULER_INTERVAL: int = 60  # Validator ile düzelteceğiz
     
+    # Otomatik mesajlaşma ayarları
+    ENABLE_AUTO_MESSAGING: bool = True
+    AUTO_MESSAGING_INTERVAL_MIN: int = 180  # 3 dakika
+    AUTO_MESSAGING_INTERVAL_MAX: int = 420  # 7 dakika
+    
     # Ağ Ayarları
     SOCKET_TIMEOUT: int = safe_getenv_int("SOCKET_TIMEOUT", "30")  # saniye
     MAX_CONNECTIONS: int = safe_getenv_int("MAX_CONNECTIONS", "100")
@@ -150,6 +161,11 @@ class Settings(BaseSettings):
     
     # API Uygulama Port Ayarı
     PORT: int = safe_getenv_int("PORT", "8000")
+    
+    # Servis ayarları
+    AUTO_RESTART_SERVICES: bool = True  # Sorunlu servisleri otomatik yeniden başlat
+    ENABLE_SERVICE_MONITOR: bool = True  # Servis izleyiciyi etkinleştir
+    SERVICE_MONITOR_INTERVAL: int = 60  # Servis izleme aralığı (saniye)
     
     # Validator fonksiyonları
     @validator("DEBUG", pre=True)
@@ -326,6 +342,13 @@ class Settings(BaseSettings):
                 return value.upper()
             return "INFO"
         return v
+    
+    @validator("ENABLE_AUTO_MESSAGING", pre=True)
+    def validate_enable_auto_messaging(cls, v):
+        if isinstance(v, str):
+            value = v.split('#')[0].strip().lower() if '#' in v else v.strip().lower()
+            return value in ("true", "yes", "1", "t", "y", "true")
+        return bool(v)
     
     class Config:
         env_file = ".env"

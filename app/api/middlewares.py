@@ -5,6 +5,7 @@ API için middleware bileşenleri.
 """
 
 import time
+import json
 from typing import Callable
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -25,13 +26,16 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         method = request.method
         
-        # İsteği logla
+        # İsteği logla - extra parametreleri dict olarak ayrıca oluştur
+        request_data = {
+            "method": method,
+            "path": path,
+            "query_params": dict(request.query_params),
+            "client": request.client.host if request.client else None
+        }
+        
         logger.info(
-            f"İstek alındı: {method} {path}",
-            method=method,
-            path=path,
-            query_params=dict(request.query_params),
-            client=request.client.host if request.client else None
+            f"İstek alındı: {method} {path} - {json.dumps(request_data)}"
         )
         
         try:
@@ -42,25 +46,35 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             process_time = time.time() - start_time
             status_code = response.status_code
             
-            log_method = logger.info if status_code < 400 else logger.error
-            log_method(
-                f"Yanıt gönderildi: {method} {path} {status_code} ({process_time:.4f}s)",
-                method=method,
-                path=path,
-                status_code=status_code,
-                process_time=f"{process_time:.4f}s"
-            )
+            response_data = {
+                "method": method,
+                "path": path,
+                "status_code": status_code,
+                "process_time": f"{process_time:.4f}s"
+            }
+            
+            if status_code < 400:
+                logger.info(
+                    f"Yanıt gönderildi: {method} {path} {status_code} ({process_time:.4f}s) - {json.dumps(response_data)}"
+                )
+            else:
+                logger.error(
+                    f"Hatalı yanıt: {method} {path} {status_code} ({process_time:.4f}s) - {json.dumps(response_data)}"
+                )
             
             return response
         except Exception as e:
             # Hataları logla
             process_time = time.time() - start_time
+            error_data = {
+                "method": method,
+                "path": path,
+                "error": str(e),
+                "process_time": f"{process_time:.4f}s"
+            }
+            
             logger.exception(
-                f"İstek işleme hatası: {method} {path} - {str(e)}",
-                method=method,
-                path=path,
-                error=str(e),
-                process_time=f"{process_time:.4f}s"
+                f"İstek işleme hatası: {method} {path} - {str(e)} - {json.dumps(error_data)}"
             )
             raise
 

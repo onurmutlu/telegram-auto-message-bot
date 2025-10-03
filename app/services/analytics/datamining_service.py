@@ -32,6 +32,87 @@ class DataMiningService(BaseService):
             'last_processed': None
         }
     
+    async def _start(self) -> bool:
+        """
+        Servisi başlatır. BaseService.initialize() tarafından çağrılır.
+        
+        Returns:
+            bool: Başarılı olursa True, başarısız olursa False
+        """
+        try:
+            # Her adımı ayrı olarak ele alıp, bir hata olursa diğer adımlara devam edelim
+            try:
+                # Veri madenciliği verilerini yükle
+                await self._load_mining_data()
+            except Exception as e:
+                logger.error(f"Veri madenciliği verileri yüklenirken hata: {str(e)}", exc_info=True)
+                # Hata olursa boş bir dict ile devam et
+                self.mining_data = {}
+            
+            try:
+                await self._load_mining_stats()
+            except Exception as e:
+                logger.error(f"Veri madenciliği istatistikleri yüklenirken hata: {str(e)}", exc_info=True)
+                # Hata olursa boş bir dict ile devam et
+                self.mining_stats = {}
+            
+            # Veri toplama görevini başlat
+            if hasattr(self, "start_data_collection_task"):
+                asyncio.create_task(self.start_data_collection_task())
+            
+            logger.info(f"{self.service_name} servisi başlatıldı.")
+            return True
+            
+        except Exception as e:
+            logger.error(f"{self.service_name} servisi başlatılırken genel hata: {str(e)}", exc_info=True)
+            return False
+    
+    async def _stop(self) -> bool:
+        """
+        Servisi durdurur. BaseService.stop() tarafından çağrılır.
+        
+        Returns:
+            bool: Başarılı olursa True, başarısız olursa False
+        """
+        try:
+            # Servis verilerini kaydet
+            logger.info(f"{self.service_name} servisi durduruluyor...")
+            # İhtiyaç duyulan temizleme işlemleri burada yapılabilir
+            logger.info(f"{self.service_name} servisi durduruldu.")
+            return True
+        except Exception as e:
+            logger.error(f"{self.service_name} servisi durdurulurken hata: {str(e)}", exc_info=True)
+            return False
+    
+    async def _update(self) -> None:
+        """
+        Periyodik güncelleme. BaseService.run() tarafından periyodik olarak çağrılır.
+        """
+        try:
+            logger.debug(f"{self.service_name} servisi güncelleniyor...")
+            
+            # İstatistikleri güncelle
+            await self._load_mining_stats()
+            
+            # Zamanı gelmiş madencilik işlerini çalıştır
+            active_jobs = [job for job in self.mining_data.values() if job.get('is_active', True)]
+            for job in active_jobs:
+                try:
+                    group_id = job.get('group_id')
+                    if group_id:
+                        # Grup verilerini güncelle
+                        await self.update_group_data()
+                except Exception as e:
+                    logger.error(f"Madencilik işi çalıştırılırken hata: {str(e)}", exc_info=True)
+            
+            self.last_update = datetime.now()
+            self.stats['total_processed'] += len(active_jobs)
+            self.stats['last_processed'] = self.last_update
+            
+            logger.debug(f"{self.service_name} servisi güncelleme tamamlandı.")
+        except Exception as e:
+            logger.error(f"{self.service_name} servisi güncellenirken hata: {str(e)}", exc_info=True)
+    
     async def initialize(self) -> bool:
         """
         Servisi başlatır.

@@ -1,0 +1,103 @@
+
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Bot Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #333;
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        .status {
+            background-color: #f9f9f9;
+            border-left: 5px solid #3498db;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .service {
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+        }
+        .running {
+            color: green;
+            font-weight: bold;
+        }
+        .stopped {
+            color: red;
+            font-weight: bold;
+        }
+        .actions {
+            margin-top: 30px;
+            padding: 15px;
+            background-color: #ecf0f1;
+            border-radius: 5px;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+    </style>
+</head>
+<body>
+    <h1>Telegram Bot Dashboard</h1>
+    
+    <div class="status">
+        <h2>Bot Durumu</h2>
+        <p><strong>Durum:</strong> <span class="running">Çalışıyor</span></p>
+        <p><strong>Çalışma Süresi:</strong> <span id="uptime">12 saat, 45 dakika</span></p>
+        <p><strong>Son Güncelleme:</strong> <span id="last-update">21.05.2025 21:20</span></p>
+    </div>
+    
+    <h2>Servisler</h2>
+    <div class="service">
+        <h3>Mesajlaşma Servisi</h3>
+        <p><strong>Durum:</strong> <span class="running">Çalışıyor</span></p>
+        <p><strong>Mesaj Sayısı:</strong> 120</p>
+    </div>
+    
+    <div class="service">
+        <h3>Analiz Servisi</h3>
+        <p><strong>Durum:</strong> <span class="running">Çalışıyor</span></p>
+        <p><strong>İzlenen Grup Sayısı:</strong> 15</p>
+    </div>
+    
+    <div class="service">
+        <h3>İzleme Servisi</h3>
+        <p><strong>Durum:</strong> <span class="running">Çalışıyor</span></p>
+        <p><strong>Son Kontrol:</strong> 21.05.2025 21:15</p>
+    </div>
+    
+    <div class="actions">
+        <h2>İşlemler</h2>
+        <button onclick="alert('Servisler yeniden başlatılıyor...')">Servisleri Yeniden Başlat</button>
+        <button onclick="alert('Loglar görüntüleniyor...')">Logları Görüntüle</button>
+        <button onclick="alert('Ayarlar açılıyor...')">Ayarları Düzenle</button>
+    </div>
+
+    <script>
+        // Gerçek zamanlı güncelleme için buraya JavaScript eklenebilir
+        document.getElementById('last-update').textContent = new Date().toLocaleString('tr-TR');
+    </script>
+</body>
+</html>

@@ -17,3 +17,11 @@ try:
 except ImportError:
     # Doğrudan içe aktarma yapalım (göreceli import)
     from .config import Config, get_default_config
+
+"""
+Telegram Bot - Konfigürasyon Paketi
+"""
+from app.config.bot_config import settings, get_setting, update_setting, update_env_file
+
+# Dışa aktarılan modüller
+__all__ = ["settings", "get_setting", "update_setting", "update_env_file"]

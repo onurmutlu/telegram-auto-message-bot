@@ -35,14 +35,25 @@ class AnalyticsService(BaseService):
     service_name = "analytics_service"
     default_interval = 1800  # 30 dakika
     
-    def __init__(self, **kwargs):
+    def __init__(self, name='analytics_service', db=None, config=None, client=None, stop_event=None, *args, **kwargs):
         """
         AnalyticsService sınıfının başlatıcısı.
         
         Args:
+            name: Servis adı
+            db: Veritabanı bağlantısı
+            config: Konfigürasyon nesnesi
+            client: Telegram client
+            stop_event: Durdurma eventi
             **kwargs: Temel servis parametreleri
         """
-        super().__init__(**kwargs)
+        super().__init__(name=name)
+        
+        # Servis bağımlılıkları
+        self.db = db
+        self.config = config
+        self.client = client
+        self.stop_event = stop_event
         
         # İstatistikler
         self.user_stats = {}
@@ -72,6 +83,9 @@ class AnalyticsService(BaseService):
             'total_messages': 0,
             'total_commands': 0
         }
+        
+        # Diğer servisler
+        self.services = kwargs.get('services', {})
     
     async def _start(self) -> bool:
         """

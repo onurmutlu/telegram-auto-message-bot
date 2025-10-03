@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import TelegramClient
 
 from app.core.config import settings
-from app.services.base import BaseService
+from app.services.base_service import BaseService
 from app.services.analytics.activity_service import ActivityService
 from app.services.analytics.user_service import UserService
 from app.services.monitoring.health_service import HealthService

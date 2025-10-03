@@ -136,9 +136,9 @@ class ErrorService(BaseService):
             "GENERAL": 300        # Genel hatalar için 5 dakika
         }
         
-    async def initialize(self) -> bool:
+    async def _start(self) -> bool:
         """
-        Servisi başlat ve gerekli kaynakları yükle
+        Servisi başlatır - BaseService.initialize() tarafından çağrılır.
         
         Returns:
             bool: Başarılı ise True
@@ -149,91 +149,77 @@ class ErrorService(BaseService):
             # Log dizinini oluştur
             os.makedirs(self.error_log_path, exist_ok=True)
             
-            # Yeni: Kategori bazlı log dizinleri oluştur
+            # Kategori bazlı log dizinleri oluştur
             for category in self.category_thresholds.keys():
                 category_path = os.path.join(self.error_log_path, category.lower())
                 os.makedirs(category_path, exist_ok=True)
             
-            # Konfigürasyondan ayarları yükle (varsa)
-            if hasattr(self.config, 'get_setting'):
-                # Doğrudan get_setting ile ayarları yükle
-                self.max_retained_errors = self.config.get_setting('error_service.max_retained_errors', 1000)
-                self.error_log_path = self.config.get_setting('error_service.error_log_path', self.error_log_path)
-                self.notify_critical = self.config.get_setting('error_service.notify_critical', True)
-                self.notify_error = self.config.get_setting('error_service.notify_error', True)
-                self.alert_threshold = self.config.get_setting('error_service.alert_threshold', 5)
-                self.alert_window = self.config.get_setting('error_service.alert_window', 300)
-                
-                # Kategori bazlı eşikler
-                category_thresholds = self.config.get_setting('error_service.category_thresholds', None)
-                if category_thresholds:
-                    self.category_thresholds = category_thresholds
-                
-                # Kategori bazlı zaman pencereleri
-                category_windows = self.config.get_setting('error_service.category_windows', None)
-                if category_windows:
-                    self.category_windows = category_windows
-            elif isinstance(self.config, dict) and 'error_service' in self.config:
-                # Dict yapısından yükleme
-                error_config = self.config['error_service']
-                self._load_config_values(error_config)
-            
-            self.initialized = True
-            logger.info("ErrorService başlatıldı")
-            return True
-        except Exception as e:
-            logger.error(f"ErrorService başlatılırken hata: {e}")
-            return False
-    
-    async def start(self) -> bool:
-        """
-        Servisi başlat
-        
-        Returns:
-            bool: Başarılı ise True
-        """
-        if not self.initialized:
-            if not await self.initialize():
-                return False
-        
-        try:
             # Hata işleme görevini başlat
             self.processing_task = asyncio.create_task(self._process_errors())
             
             # Python uncaught exception handler'ı yerleştir
             sys.excepthook = self._handle_uncaught_exception
             
-            self.is_running = True
-            logger.info("ErrorService çalışıyor")
+            logger.info("ErrorService başlatıldı")
             return True
             
         except Exception as e:
             logger.error(f"ErrorService başlatılırken hata: {str(e)}", exc_info=True)
             return False
     
-    async def stop(self) -> None:
+    async def _stop(self) -> bool:
         """
-        Servisi durdur
+        Servisi durdurur - BaseService.stop() tarafından çağrılır.
         
         Returns:
-            None
+            bool: Başarılı ise True
         """
-        # İşleme görevi çalışıyorsa durdur
-        if self.processing_task and not self.processing_task.done():
-            self.processing_task.cancel()
-            try:
-                await self.processing_task
-            except asyncio.CancelledError:
-                pass
-        
-        # Tüm hata kayıtlarını kaydet
-        await self._save_error_records()
-        
-        # Original excepthook'u geri getir
-        sys.excepthook = sys.__excepthook__
+        try:
+            # İşleme görevi çalışıyorsa durdur
+            if self.processing_task and not self.processing_task.done():
+                self.processing_task.cancel()
+                try:
+                    await self.processing_task
+                except asyncio.CancelledError:
+                    pass
             
-        self.is_running = False
-        logger.info("ErrorService durduruldu")
+            # Tüm hata kayıtlarını kaydet
+            await self._save_error_records()
+            
+            # Original excepthook'u geri getir
+            sys.excepthook = sys.__excepthook__
+                
+            logger.info("ErrorService durduruldu")
+            return True
+            
+        except Exception as e:
+            logger.error(f"ErrorService durdurulurken hata: {str(e)}", exc_info=True)
+            return False
+    
+    async def _update(self) -> None:
+        """
+        Periyodik güncelleme - BaseService.run() tarafından periyodik olarak çağrılır.
+        
+        Hata istatistiklerini günceller ve eski hataları temizler.
+        """
+        try:
+            # Eski hataları temizle
+            now = datetime.now()
+            cutoff_time = now - timedelta(days=30)  # 30 günden eski hataları tut
+            
+            # Çok sayıda hata varsa eski çözülmüş olanları temizle
+            if len(self.errors) > self.max_retained_errors:
+                # Çözülmüş hataları ve eski hataları temizle
+                self.errors = {
+                    error_id: error for error_id, error in self.errors.items()
+                    if (not error.resolved or error.resolved_at > cutoff_time)
+                }
+                
+            # Hata istatistiklerini kaydet
+            await self._save_error_records()
+                
+        except Exception as e:
+            logger.error(f"ErrorService güncelleme hatası: {str(e)}", exc_info=True)
     
     def _handle_uncaught_exception(self, exc_type, exc_value, exc_traceback):
         """

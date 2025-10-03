@@ -171,15 +171,43 @@ class ReplyService(BaseService):
         try:
             if not event.message or not event.message.text:
                 return
-                
+            # Eğer mesaj bir yanıt ise ve sohbet açıcıya cevap ise
+            if event.message.reply_to_msg_id:
+                try:
+                    orig_msg = await event.client.get_messages(event.chat_id, ids=event.message.reply_to_msg_id)
+                    with open('data/messages.json', 'r', encoding='utf-8') as f:
+                        messages = json.load(f)
+                    sohbet_acici_list = messages.get('sohbet_acici', [])
+                    if orig_msg.text and orig_msg.text.strip() in sohbet_acici_list:
+                        with open('data/responses.json', 'r', encoding='utf-8') as f:
+                            responses = json.load(f)
+                        reply_list = responses.get('sohbet_acici_reply', [])
+                        if reply_list:
+                            yanit = random.choice(reply_list)
+                            await event.reply(yanit)
+                            logger.info(f"Sohbet açıcıya otomatik yanıt gönderildi: {yanit}")
+                            return
+                except Exception as e:
+                    logger.warning(f"Sohbet açıcı yanıtı kontrolünde hata: {e}")
             # Bot mention edildi mi kontrol et
             if event.message.mentioned:
+                # DM'e yönlendirici yanıtlar
+                try:
+                    with open('data/responses.json', 'r', encoding='utf-8') as f:
+                        responses = json.load(f)
+                    dm_yonlendirici = responses.get('sohbet_acici_reply', [])
+                    if dm_yonlendirici:
+                        yanit = random.choice(dm_yonlendirici)
+                        await event.reply(yanit)
+                        logger.info(f"Mention'a DM yönlendirici yanıt gönderildi: {yanit}")
+                        return
+                except Exception as e:
+                    logger.warning(f"Mention DM yanıtı kontrolünde hata: {e}")
+                # Eski flirty yanıtı fallback
                 await self._handle_mention(event)
-                
             # Özel komutları kontrol et
             elif event.message.text.startswith('/'):
                 await self._handle_command(event)
-                
         except Exception as e:
             logger.error(f"Yeni mesaj işleme hatası: {str(e)}")
             

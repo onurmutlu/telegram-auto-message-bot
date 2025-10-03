@@ -304,3 +304,20 @@ class Config:
         Süper kullanıcıların listesini döndürür.
         """
         return self.settings.super_users
+
+    @property
+    def POSTGRES_DSN(self):
+        """
+        PostgreSQL bağlantı dizesini üretir.
+        """
+        url = os.environ.get('DATABASE_URL')
+        if url:
+            return url
+        if hasattr(self, 'database') and getattr(self.database, 'type', '').lower() == 'postgres':
+            user = getattr(self.database, 'user', 'postgres')
+            password = getattr(self.database, 'password', 'postgres')
+            host = getattr(self.database, 'host', 'localhost')
+            port = getattr(self.database, 'port', 5432)
+            db = getattr(self.database, 'database', 'telegram_bot')
+            return f'postgresql+psycopg2://{user}:{password}@{host}:{port}/{db}'
+        return 'sqlite:///data/bot.db'

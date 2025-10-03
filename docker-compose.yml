@@ -1,44 +1,41 @@
-version: '3.8'
+version: '3'
 
 services:
   postgres:
-    image: postgres:15-alpine
+    image: postgres:13
     container_name: telegram-bot-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-      POSTGRES_DB: ${DB_NAME:-telegram_bot}
-      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_USER: botuser
+      POSTGRES_PASSWORD: botpass
+      POSTGRES_DB: botdb
+    ports:
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./data/postgres:/docker-entrypoint-initdb.d
-    ports:
-      - "${DB_PORT:-5432}:5432"
+    networks:
+      - bot-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U botuser"]
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
-    networks:
-      - bot-network
 
   redis:
-    image: redis:7-alpine
+    image: redis:6
     container_name: telegram-bot-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
     volumes:
       - redis_data:/data
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    networks:
+      - bot-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
-    networks:
-      - bot-network
 
   telegram-bot:
     build:
@@ -70,27 +67,25 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: telegram-bot-api
     container_name: telegram-bot-api
-    command: python -m app.api.main
-    volumes:
-      - ./app:/app/app
+    restart: unless-stopped
     env_file:
       - .env
-    environment:
-      - DB_HOST=postgres
-      - REDIS_HOST=redis
-      - TZ=Europe/Istanbul
-      - ENABLE_API=true
-    ports:
-      - "${API_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./runtime:/app/runtime
+      - ./data:/app/data
+      - ./logs:/app/logs
     networks:
       - bot-network
+    command: ["./start.sh"]
 
 volumes:
   postgres_data:

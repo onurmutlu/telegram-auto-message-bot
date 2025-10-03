@@ -8,71 +8,63 @@
 # Versiyon: v2.0.0
 # ============================================================================ #
 
-# Renk tanımları
+# Renkler tanımla
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}Telegram Bot durduruluyor...${NC}"
+echo -e "${BLUE}====================================================${NC}"
+echo -e "${GREEN}            TELEGRAM BOT DURDURULUYOR              ${NC}"
+echo -e "${BLUE}====================================================${NC}"
 
-# PID dosyası
-PID_FILE=".bot_pids"
-
-# PID dosyası var mı kontrol et
-if [ ! -f "$PID_FILE" ]; then
-    echo -e "${YELLOW}PID dosyası bulunamadı. Bot çalışmıyor olabilir.${NC}"
-    exit 0
+# Bot PID'sini kontrol et
+if [ -f ".bot_pid" ]; then
+    PID=$(cat .bot_pid)
+    if ps -p $PID > /dev/null; then
+        echo -e "${YELLOW}Bot süreci durduruluyor (PID: $PID)...${NC}"
+        kill $PID
+        sleep 2
+        
+        # Süreç hala çalışıyorsa zorla kapat
+        if ps -p $PID > /dev/null; then
+            echo -e "${YELLOW}Bot zorla kapatılıyor...${NC}"
+            kill -9 $PID
+            sleep 1
+        fi
+        
+        echo -e "${GREEN}✓ Bot durduruldu${NC}"
+    else
+        echo -e "${YELLOW}Bot süreci zaten çalışmıyor (PID: $PID)${NC}"
+    fi
+    
+    # PID dosyasını temizle
+    rm .bot_pid
+else
+    # PID dosyası yoksa, Python süreçlerini ara
+    echo -e "${YELLOW}Bot süreçleri aranıyor...${NC}"
+    PIDS=$(ps aux | grep "[p]ython.*autostart_bot.py" | awk '{print $2}')
+    
+    if [ -n "$PIDS" ]; then
+        echo -e "${YELLOW}Bulunan bot süreçleri:${NC}"
+        for PID in $PIDS; do
+            echo -e "${BLUE}Durduruluyor: PID $PID${NC}"
+            kill $PID
+            sleep 1
+            # Süreç hala çalışıyorsa zorla kapat
+            if ps -p $PID > /dev/null; then
+                echo -e "${YELLOW}Süreç zorla kapatılıyor: PID $PID${NC}"
+                kill -9 $PID
+            fi
+        done
+        echo -e "${GREEN}✓ Tüm bot süreçleri durduruldu${NC}"
+    else
+        echo -e "${YELLOW}Çalışan bot süreci bulunamadı${NC}"
+    fi
 fi
 
-# PID listesi
-pids=$(cat $PID_FILE)
-
-# Hata sayacı
-error_count=0
-
-# Her PID için
-for pid in $pids; do
-    if [ -n "$pid" ]; then
-        echo -e "${YELLOW}PID: $pid durduruluyor...${NC}"
-        
-        # Süreç hala çalışıyor mu kontrol et
-        if ps -p $pid > /dev/null 2>&1; then
-            # SIGTERM gönder (graceful shutdown)
-            kill -15 $pid 2>/dev/null
-            
-            # 5 saniye bekle
-            echo "Bekleniyor..."
-            sleep 5
-            
-            # Hala çalışıyor mu kontrol et
-            if ps -p $pid > /dev/null 2>&1; then
-                echo -e "${YELLOW}PID: $pid SIGTERM ile durdurulamadı, SIGKILL deneniyor...${NC}"
-                # SIGKILL gönder (zorla durdur)
-                kill -9 $pid 2>/dev/null
-                
-                # 2 saniye bekle
-                sleep 2
-                
-                # Son kontrol
-                if ps -p $pid > /dev/null 2>&1; then
-                    echo -e "${RED}PID: $pid durdurulamadı.${NC}"
-                    error_count=$((error_count+1))
-                else
-                    echo -e "${GREEN}PID: $pid durduruldu.${NC}"
-                fi
-            else
-                echo -e "${GREEN}PID: $pid durduruldu.${NC}"
-            fi
-        else
-            echo -e "${YELLOW}PID: $pid zaten çalışmıyor.${NC}"
-        fi
-    fi
-done
-
-# PID dosyasını temizle
-echo "" > $PID_FILE
+echo -e "${BLUE}====================================================${NC}"
 
 # Docker altında çalışıyorsa, Python süreçlerini de temizle
 if [ -f "/.dockerenv" ]; then

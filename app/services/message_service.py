@@ -24,15 +24,18 @@ class MessageService(BaseService):
     service_name = "message_service"
     default_interval = 30  # 30 saniyede bir kontrol et
     
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, name='message_service', client=None, db=None, config=None, stop_event=None, *args, **kwargs):
+        super().__init__(name=name)
+        self.client = client
+        self.db = db
+        self.config = config
+        self.stop_event = stop_event
         # Config'den ayarları al
         self.bot_enabled = getattr(settings, 'BOT_ENABLED', True)
         self.debug_mode = getattr(settings, 'DEBUG', False)
         self.batch_size = getattr(settings, 'MESSAGE_BATCH_SIZE', 50)
         self.batch_interval = getattr(settings, 'MESSAGE_BATCH_INTERVAL', 30)
         self.initialized = False
-        self.client = None
         self.running = False  # Servis çalışma durumu
         logger.info(f"MessageService başlatıldı. Bot aktif: {self.bot_enabled}")
     

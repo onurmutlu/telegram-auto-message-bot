@@ -40,7 +40,7 @@ if [ -d "./.venv" ]; then
     
     # Gerekli paketleri kontrol et
     echo -e "${BLUE}Gerekli paketler kontrol ediliyor...${NC}"
-    python -c "import telethon, fastapi, sqlalchemy, pydantic" 2>/dev/null || {
+    python -c "import telethon, fastapi, sqlalchemy, pydantic, sqlmodel" 2>/dev/null || {
         echo -e "${YELLOW}⚠ Bazı gerekli paketler eksik. Paketler yükleniyor...${NC}"
         pip install -r requirements.txt
     }
@@ -101,8 +101,10 @@ else
     echo -e "${GREEN}✓ .env dosyası mevcut.${NC}"
 fi
 
-# Otomatik başlatma scriptini çalıştır
-echo -e "${BLUE}Bot otomatik başlatma scripti çalıştırılıyor...${NC}"
+# Otomatik mesajlaşma özelliği (her başlangıçta aktif olacak)
+export ENABLE_AUTO_MESSAGING=True
+export AUTO_MESSAGING_INTERVAL_MIN=180  # 3 dakika
+export AUTO_MESSAGING_INTERVAL_MAX=420  # 7 dakika
 
 # Doğrulama kodu ve 2FA için parametreleri kontrol et
 AUTH_CODE=""
@@ -148,6 +150,12 @@ if [ -n "$PASSWORD" ]; then
   chmod 600 ./.telegram_2fa_password
 fi
 
+# Otomatik mesajlaşmayı aktifleştirme mesajı
+echo -e "${BLUE}====================================================${NC}"
+echo -e "${GREEN}Otomatik mesajlaşma özelliği etkinleştirildi!${NC}"
+echo -e "${BLUE}Bot başlatıldığında otomatik mesajlar aktif olacak${NC}"
+echo -e "${BLUE}====================================================${NC}"
+
 # Botu başlat
 python autostart_bot.py
 
@@ -156,6 +164,7 @@ if [ $? -eq 0 ]; then
     echo -e "${GREEN}✓ Bot başarıyla başlatıldı ve çalışıyor.${NC}"
     echo -e "${BLUE}====================================================${NC}"
     echo -e "${GREEN}BOT HAZIR ve ÇALIŞIYOR!${NC}"
+    echo -e "${GREEN}Otomatik mesajlaşma servisi aktif!${NC}"
     echo -e "${BLUE}====================================================${NC}"
 else
     echo -e "${RED}HATA: Bot başlatılamadı!${NC}"
@@ -168,3 +177,7 @@ echo -e "${BLUE}Bot servis olarak arkaplanda çalışıyor. İzlemek için:${NC}
 echo -e "${YELLOW}tail -f bot_autostart.log${NC}"
 echo -e "${BLUE}Durdurmak için:${NC}"
 echo -e "${YELLOW}./stop.sh${NC}"
+
+# Servis izleme özelliğini etkinleştir
+export ENABLE_SERVICE_MONITOR=True
+export AUTO_RESTART_SERVICES=True

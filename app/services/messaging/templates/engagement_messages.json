@@ -1,0 +1,23 @@
+{
+  "general": [
+    "Merhaba arkadaşlar! Bugün nasılsınız? 😊",
+    "Gruba yeni bir konu açmak istiyorum. Sizce ne konuşalım?",
+    "Bugün ilginç bir şey yaşadınız mı? Paylaşmak ister misiniz?",
+    "Herkesin güzel bir günü olsun! 🌟",
+    "Bu aralar neler izliyorsunuz/okuyorsunuz? Tavsiyelerinizi bekliyorum."
+  ],
+  "question": [
+    "Sizce teknoloji hayatımızı nasıl etkiliyor?",
+    "En sevdiğiniz film veya dizi nedir? Neden?",
+    "Eğer bir süper gücünüz olsaydı, ne olmasını isterdiniz?",
+    "Gelecekte hangi teknolojinin hayatımızı değiştireceğini düşünüyorsunuz?",
+    "Hangi konuda kendinizi geliştirmek istiyorsunuz?"
+  ],
+  "poll": [
+    "Evden çalışmak mı, ofiste çalışmak mı?",
+    "Android mi, iOS mu?",
+    "Sabah insanı mısınız, gece insanı mısınız?",
+    "Çay mı, kahve mi?",
+    "Kitap okumak mı, film izlemek mi?"
+  ]
+}

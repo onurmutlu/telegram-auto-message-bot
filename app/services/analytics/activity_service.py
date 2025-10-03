@@ -20,7 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
 from app.db.session import get_session
-from app.services.base import BaseService
+from app.services.base_service import BaseService
 from app.models.user import User
 from app.models.message import Message
 from app.models.group import Group
@@ -40,9 +40,10 @@ class ActivityService(BaseService):
     service_name = "activity_service"
     default_interval = 3600  # 1 saat
     
-    def __init__(self, db: AsyncSession = None):
+    def __init__(self, client=None, db=None, *args, **kwargs):
         """ActivityService başlatıcısı."""
-        super().__init__(name="activity_service")
+        super().__init__(name='activity_service', db=db)
+        self.client = client
         self.db = db
         self.running = False
         self.initialized = False
@@ -211,7 +212,7 @@ class ActivityService(BaseService):
             active_users_query = text("""
                 SELECT COUNT(DISTINCT id) as count
                 FROM users 
-                WHERE last_activity_at > :since
+                WHERE created_at > :since
             """)
             
             result = self.db.execute(active_users_query, {"since": since})
@@ -278,18 +279,49 @@ class ActivityService(BaseService):
             total_groups = row.count if row else 0
             
             # En aktif gruplar (en çok mesaj olan)
-            top_groups_query = text("""
-                SELECT g.name as title, COUNT(m.id) as message_count 
-                FROM messages m
-                JOIN groups g ON m.group_id = g.group_id
-                WHERE m.created_at > :since
-                GROUP BY g.id, g.name
-                ORDER BY message_count DESC
-                LIMIT 5
-            """)
-            
-            result = self.db.execute(top_groups_query, {"since": since})
-            top_groups = [{"title": row.title, "message_count": row.message_count} for row in result.fetchall()]
+            # Güvenli ve esnek bir sorgu - tablo yapısına uyumlu
+            try:
+                # Önce groups tablosunun alanlarını kontrol et
+                columns_query = text("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'groups';
+                """)
+                
+                result = self.db.execute(columns_query)
+                columns = [row.column_name for row in result.fetchall()]
+                
+                # Grup adı için olası alan adları
+                name_fields = ['name', 'title', 'group_name']
+                group_name_field = None
+                
+                # Mevcut alan adını bul
+                for field in name_fields:
+                    if field in columns:
+                        group_name_field = field
+                        break
+                
+                if not group_name_field:
+                    logger.warning("Groups tablosunda grup adı alanı bulunamadı!")
+                    group_name_field = 'id'  # Varsayılan olarak ID kullan
+                
+                # Doğru alan adıyla SQL sorgusunu oluştur
+                top_groups_query = text(f"""
+                    SELECT g.{group_name_field} as title, COUNT(m.id) as message_count 
+                    FROM messages m
+                    JOIN groups g ON m.group_id = g.id
+                    WHERE m.created_at > :since
+                    GROUP BY g.id, g.{group_name_field}
+                    ORDER BY message_count DESC
+                    LIMIT 5
+                """)
+                
+                result = self.db.execute(top_groups_query, {"since": since})
+                top_groups = [{"title": row.title, "message_count": row.message_count} for row in result.fetchall()]
+                
+            except Exception as e:
+                logger.error(f"En aktif grupları çekerken hata: {e}")
+                top_groups = []
             
             # Sonuçları kaydet
             self.activity_stats["groups"] = {
@@ -334,16 +366,45 @@ class ActivityService(BaseService):
             recent_messages_count = row.count if row else 0
             
             # Mesaj türü dağılımı
-            message_types_query = text("""
-                SELECT message_type, COUNT(*) as count
-                FROM messages
-                WHERE created_at > :since
-                GROUP BY message_type
-                ORDER BY count DESC
-            """)
-            
-            result = self.db.execute(message_types_query, {"since": since})
-            message_types = [{"type": row.message_type, "count": row.count} for row in result.fetchall()]
+            try:
+                # Önce messages tablosunun alanlarını kontrol et
+                columns_query = text("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'messages';
+                """)
+                
+                result = self.db.execute(columns_query)
+                columns = [row.column_name for row in result.fetchall()]
+                
+                # Mesaj türü için olası alan adları
+                type_fields = ['type', 'message_type', 'msg_type']
+                message_type_field = None
+                
+                # Mevcut alan adını bul
+                for field in type_fields:
+                    if field in columns:
+                        message_type_field = field
+                        break
+                
+                if message_type_field:
+                    # Doğru alan adıyla SQL sorgusunu oluştur
+                    message_types_query = text(f"""
+                        SELECT m.{message_type_field} as message_type, COUNT(*) as count
+                        FROM messages m
+                        WHERE m.created_at > :since
+                        GROUP BY m.{message_type_field}
+                        ORDER BY count DESC
+                    """)
+                    
+                    result = self.db.execute(message_types_query, {"since": since})
+                    message_types = [{"type": row.message_type, "count": row.count} for row in result.fetchall()]
+                else:
+                    logger.warning("Messages tablosunda mesaj türü alanı bulunamadı!")
+                    message_types = []
+            except Exception as e:
+                logger.error(f"Mesaj türlerini çekerken hata: {e}")
+                message_types = []
             
             # Sonuçları kaydet
             self.activity_stats["messages"] = {

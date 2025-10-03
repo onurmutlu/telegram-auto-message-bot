@@ -49,11 +49,16 @@ class GroupService(BaseService):
     service_name = "group_service"
     default_interval = 60  # 60 saniyede bir kontrol et
     
-    def __init__(self, **kwargs):
+    def __init__(self, name='group_service', client=None, db=None, config=None, stop_event=None, *args, **kwargs):
         """
         GroupService sınıfının başlatıcısı.
         """
-        super().__init__(**kwargs)
+        super().__init__(name=name)
+        self.logger = logging.getLogger(__name__)  # Logger tanımla
+        self.client = client
+        self.db = db
+        self.config = config
+        self.stop_event = stop_event
         
         # Grup verileri
         self.groups = {}

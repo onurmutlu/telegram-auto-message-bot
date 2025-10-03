@@ -2,5 +2,8 @@
   "name": "telegram-bot-utils",
   "version": "1.0.0",
   "description": "Telegram Bot yardımcı araçları",
-  "private": true
+  "private": true,
+  "dependencies": {
+    "jinja2": "^0.0.1"
+  }
 }

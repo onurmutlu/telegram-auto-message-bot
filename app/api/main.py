@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from fastapi import FastAPI, Request, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer
@@ -110,6 +110,31 @@ static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+# Admin paneli için özel endpoint
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_panel():
+    """Admin panelini servir eder."""
+    admin_index_path = os.path.join(static_dir, "admin", "index.html")
+    
+    try:
+        with open(admin_index_path, "r") as f:
+            content = f.read()
+        return content
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Admin panel bulunamadı.")
+
+@app.get("/admin/{path:path}", response_class=HTMLResponse)
+async def admin_pages(path: str):
+    """Admin paneli alt sayfalarını servir eder."""
+    admin_index_path = os.path.join(static_dir, "admin", "index.html")
+    
+    try:
+        with open(admin_index_path, "r") as f:
+            content = f.read()
+        return content
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Admin panel bulunamadı.")
+
 # Temel rotalar
 @app.get("/")
 async def root():
@@ -137,10 +162,11 @@ async def websocket_logs(websocket: WebSocket):
     
     Client'lar bu endpoint'e bağlanarak canlı log akışı alabilir.
     """
-    await websocket.accept()
-    app.state.active_connections.append(websocket)
-    
     try:
+        await websocket.accept()
+        logger.info("WebSocket log bağlantısı kabul edildi")
+        app.state.active_connections.append(websocket)
+        
         # İstemciye mevcut durumu gönder
         await websocket.send_json({
             "type": "info",
@@ -150,16 +176,31 @@ async def websocket_logs(websocket: WebSocket):
         
         # İstemci bağlı kaldığı sürece bekle
         while True:
-            data = await websocket.receive_text()
-            # Ping-pong kontrolü
-            if data == "ping":
-                await websocket.send_text("pong")
-            await asyncio.sleep(1)
+            try:
+                data = await websocket.receive_text()
+                # Ping-pong kontrolü
+                if data == "ping":
+                    await websocket.send_text("pong")
+                await asyncio.sleep(1)
+            except Exception as inner_e:
+                logger.warning(f"WebSocket iletişim hatası: {str(inner_e)}")
+                # Bağlantı koptu mu kontrol et
+                try:
+                    await websocket.send_json({
+                        "type": "warning",
+                        "message": "Bağlantı yeniden kuruluyor",
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+                except:
+                    logger.error("WebSocket bağlantısı koptu.")
+                    break
     except Exception as e:
         logger.error(f"WebSocket hatası: {str(e)}")
     finally:
+        # Kapanış işlemleri
         if websocket in app.state.active_connections:
             app.state.active_connections.remove(websocket)
+        logger.info("WebSocket log bağlantısı kapatıldı")
 
 def start():
     """API sunucusunu başlatır."""

@@ -1,37 +1,81 @@
 """
-Service Schemas
+Service şemaları
 
-Servis yönetimi için veri modellerini tanımlar.
+API'nin servis yönetimi için kullanılan şema sınıfları.
 """
 
 from typing import List, Dict, Any, Optional
-from datetime import datetime
 from pydantic import BaseModel, Field
 
-class ServiceBase(BaseModel):
-    """Servis için temel şema."""
+class ServiceResponse(BaseModel):
+    """
+    Servis bilgilerini döndüren yanıt modeli.
+    """
     name: str = Field(..., description="Servis adı")
-    
-class ServiceResponse(ServiceBase):
-    """Servis yanıt şeması."""
-    status: str = Field(..., description="Servis durumu (running, stopped, error)")
-    running: bool = Field(..., description="Servis çalışıyor mu?")
-    healthy: bool = Field(..., description="Servis sağlıklı mı?")
-    uptime: int = Field(default=0, description="Çalışma süresi (saniye)")
-    last_error: Optional[str] = Field(default=None, description="Son hata mesajı")
-    depends_on: List[str] = Field(default=[], description="Bağımlı olduğu servisler")
-    
+    status: str = Field("unknown", description="Servis durumu (started, stopped, error, starting, stopping)")
+    running: bool = Field(False, description="Servisin çalışıp çalışmadığı")
+    healthy: bool = Field(False, description="Servisin sağlıklı olup olmadığı")
+    uptime: int = Field(0, description="Çalışma süresi (saniye)")
+    last_error: Optional[str] = Field(None, description="Son hata mesajı")
+    depends_on: List[str] = Field([], description="Bağımlı olduğu servisler")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "name": "activity",
+                "status": "started",
+                "running": True,
+                "healthy": True,
+                "uptime": 3600,
+                "last_error": None,
+                "depends_on": ["database", "redis"]
+            }
+        }
+
 class ServiceStartRequest(BaseModel):
-    """Servis başlatma isteği şeması."""
-    services: List[str] = Field(default=[], description="Başlatılacak servis listesi (boş bırakılırsa tüm servisler)")
-    
+    """
+    Servis başlatma isteği.
+    """
+    services: List[str] = Field([], description="Başlatılacak servis listesi (boşsa tüm servisler)")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "services": ["activity", "user"]
+            }
+        }
+
 class ServiceStopRequest(BaseModel):
-    """Servis durdurma isteği şeması."""
-    services: List[str] = Field(default=[], description="Durdurulacak servis listesi (boş bırakılırsa tüm servisler)")
-    force: bool = Field(default=False, description="Zorunlu durdurma")
-    
+    """
+    Servis durdurma isteği.
+    """
+    services: List[str] = Field([], description="Durdurulacak servis listesi (boşsa tüm servisler)")
+    force: bool = Field(False, description="Zorla durdurma")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "services": ["activity", "user"],
+                "force": False
+            }
+        }
+
 class ServiceStatusResponse(BaseModel):
-    """Servis işlem yanıt şeması."""
+    """
+    Servis işlem sonucu yanıtı.
+    """
     status: str = Field(..., description="İşlem durumu (success, error)")
     message: str = Field(..., description="İşlem mesajı")
-    details: Dict[str, Any] = Field(default={}, description="İşlem detayları") 
+    details: Dict[str, Any] = Field({}, description="İşlem detayları")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "success",
+                "message": "Servisler başlatıldı",
+                "details": {
+                    "activity": "started",
+                    "user": "started"
+                }
+            }
+        } 

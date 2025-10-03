@@ -57,20 +57,29 @@ class GPTService(BaseService):
     service_name = "gpt_service"
     default_interval = 60  # 1 dakikada bir çalıştır
     
-    def __init__(self, **kwargs):
+    def __init__(self, name='gpt_service', client=None, db=None, config=None, stop_event=None, *args, **kwargs):
         """
         GPT servisini başlat
         
         Args:
+            name: Servis adı
+            client: OpenAI API istemcisi
+            db: Veritabanı bağlantısı
+            config: Servis yapılandırması
+            stop_event: Servis durdurma olayı
             **kwargs: Başlatma parametreleri
         """
-        super().__init__(**kwargs)
+        super().__init__(name=name)
+        self.client = client
+        self.db = db
+        self.config = config
+        self.stop_event = stop_event
         
         # OpenAI API anahtarını yapılandırmadan al
-        self.api_key = self.config.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
-        self.model = self.config.get("OPENAI_MODEL", "gpt-3.5-turbo")
-        self.max_tokens = self.config.get("OPENAI_MAX_TOKENS", 1000)
-        self.temperature = self.config.get("OPENAI_TEMPERATURE", 0.7)
+        self.api_key = getattr(self.config, "OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
+        self.model = getattr(self.config, "OPENAI_MODEL", "gpt-3.5-turbo")
+        self.max_tokens = getattr(self.config, "OPENAI_MAX_TOKENS", 1000)
+        self.temperature = getattr(self.config, "OPENAI_TEMPERATURE", 0.7)
         
         # OpenAI API istek yapılandırması
         self.client_config = {

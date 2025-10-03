@@ -69,7 +69,7 @@ python -m app.main
 veya CLI ile:
 
 ```
-python -m app.cli start
+1a
 ```
 
 ### API'yi Başlatma

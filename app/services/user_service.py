@@ -72,12 +72,16 @@ class UserService(BaseService):
     service_name = "user_service"
     default_interval = 300  # 5 dakikada bir güncelleme
     
-    def __init__(self, **kwargs):
+    def __init__(self, name='user_service', client=None, db=None, config=None, stop_event=None, *args, **kwargs):
         """
         UserService sınıfının başlatıcısı.
         """
-        super().__init__(**kwargs)
-        self.db = kwargs.get('db')
+        super().__init__(name=name)
+        self.logger = logging.getLogger(__name__)  # Logger tanımla
+        self.client = client
+        self.db = db
+        self.config = config
+        self.stop_event = stop_event
         self.initialized = False
         self.user_cache = {}
         self.stats = {

@@ -32,29 +32,20 @@ logger = logging.getLogger(__name__)
 
 class DirectMessageService(BaseService):
     """
-    DM yönetim servisi.
-    - Kullanıcılardan gelen özel mesajlara yanıt verir
-    - Hizmet satışı mesajları gönderir
-    - Gruplara katılım daveti gönderir
+    Doğrudan mesajları yöneten servis.
+    
+    Bu servis şunları yapar:
+    - Yeni gelen özel mesajları işler
+    - Otomatik cevaplar gönderir
+    - Mesaj istatistiklerini toplar
     """
     
-    service_name = "dm_service"
-    default_interval = 3600  # 1 saat
-    
-    def __init__(self, client: TelegramClient, db: AsyncSession = None):
-        """
-        DirectMessageService sınıfını başlatır.
-        
-        Args:
-            client: TelegramClient
-            db: AsyncSession
-        """
-        super().__init__(name="direct_message_service")
+    def __init__(self, client: TelegramClient, db=None):
+        """DM servisini başlat."""
+        super().__init__(name="dm_service", db=db)
         self.client = client
-        self.db = db
-        self.user_service = None
-        self.initialized = False
-        self.running = False
+        self.service_name = "dm_service"
+        self.handlers = []
         
         # Son mesaj zamanlarını takip için
         self.last_dm_times: Dict[int, datetime] = {}
@@ -77,6 +68,62 @@ class DirectMessageService(BaseService):
         # Kayıt durumu
         logger.info(f"{self.service_name} servisi başlatıldı")
         
+    async def run(self):
+        """Servis ana döngüsü."""
+        self.running = True
+        logger.info("DM servisi çalışıyor...")
+        
+        # Event handler'ları ayarla
+        @self.client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
+        async def handle_private_message(event):
+            """Özel mesajları işle"""
+            if not self.running:
+                return
+                
+            try:
+                sender = await event.get_sender()
+                logger.info(f"Özel mesaj alındı: {sender.first_name} (@{sender.username}): {event.text}")
+                
+                # Mesajı yanıtla
+                if event.text.lower() in ["selam", "merhaba", "hi", "hello"]:
+                    await event.respond(f"Merhaba {sender.first_name}! Size nasıl yardımcı olabilirim?")
+                
+            except Exception as e:
+                logger.error(f"Özel mesaj işlenirken hata: {e}")
+        
+        # Handler'ı listeye ekle
+        self.handlers.append(handle_private_message)
+        
+        try:
+            # Servis çalışırken aktif kal
+            while self.running:
+                await asyncio.sleep(10)  # Düzenli kontrol
+                
+        except asyncio.CancelledError:
+            logger.info("DM servisi iptal edildi")
+            self.running = False
+        except Exception as e:
+            logger.error(f"DM servisi çalışırken hata: {e}")
+            self.running = False
+    
+    async def stop(self):
+        """Servisi durdur."""
+        if not self.running:
+            return
+            
+        self.running = False
+        
+        # Event handler'ları temizle
+        for handler in self.handlers:
+            self.client.remove_event_handler(handler)
+        
+        self.handlers = []
+        
+        # Üst sınıf stop metodunu çağır
+        await super().stop()
+        
+        logger.info("DM servisi durduruldu")
+    
     async def initialize(self):
         """Servisi başlat ve şablonları yükle."""
         self.db = self.db or next(get_session())
@@ -287,7 +334,7 @@ class DirectMessageService(BaseService):
                 await self._send_group_invites(user_id)
             else:
                 # Diğer durumlarda genel bir yanıt ver
-                await self._send_response(user_id, message_text)
+                await self._send_auto_dm_reply(user_id)
                 
         except Exception as e:
             logger.error(f"Error handling private message: {str(e)}", exc_info=True)
@@ -482,53 +529,31 @@ class DirectMessageService(BaseService):
             except:
                 pass
     
-    async def _send_response(self, user_id: int, message_text: str):
-        """Kullanıcının mesajına özel yanıt gönder."""
+    async def _send_auto_dm_reply(self, user_id: int):
+        """
+        DM'ye gelen mesajlara otomatik yanıt gönderir (data/dm_auto_reply.json'dan).
+        """
         try:
-            # Anahtar kelimelere göre özel yanıtlar oluştur
-            keywords = {
-                "fiyat": "Fiyat bilgisi için 'hizmetler' yazarak hizmet listesini görüntüleyebilirsiniz.",
-                "ücret": "Ücret bilgisi için 'hizmetler' yazarak hizmet listesini görüntüleyebilirsiniz.",
-                "nasıl": "İşlemleriniz için 'hizmetler' yazarak hizmetlerimizi inceleyebilir veya 'gruplar' yazarak gruplara katılabilirsiniz.",
-                "yardım": "Size nasıl yardımcı olabilirim? 'hizmetler' veya 'gruplar' yazarak bilgi alabilirsiniz.",
-                "bilgi": "Hangi konuda bilgi almak istiyorsunuz? 'hizmetler' veya 'gruplar' yazarak başlayabilirsiniz.",
-                "selam": "Merhaba! Size nasıl yardımcı olabilirim?",
-                "merhaba": "Merhaba! Size nasıl yardımcı olabilirim?"
-            }
-            
-            # Mesajı küçük harfe çevir ve anahtar kelimeleri kontrol et
-            message_lower = message_text.lower()
-            custom_response = None
-            
-            for keyword, response in keywords.items():
-                if keyword in message_lower:
-                    custom_response = response
-                    break
-            
-            # Eğer özel bir yanıt bulunmadıysa genel yanıt ver
-            if not custom_response:
-                custom_response = "Mesajınız için teşekkürler. Size nasıl yardımcı olabilirim?"
-            
-            # Ana yanıt mesajı
-            response = f"{custom_response}\n\n"
-            response += "• Hizmetlerimiz hakkında bilgi almak için 'hizmetler' yazabilirsiniz.\n"
-            response += "• Gruplarımıza katılmak için 'gruplar' yazabilirsiniz.\n"
-            response += "• Diğer konularda yardım için lütfen iletişimde kalın."
-            
-            await self.client.send_message(user_id, response)
-            logger.info(f"Sent response to user {user_id}")
-            
-            # Kullanıcı istatistiklerini güncelle
-            if self.user_service:
-                await self.user_service.update_last_activity(user_id)
-                
+            import json
+            import random
+            with open('data/dm_auto_reply.json', 'r', encoding='utf-8') as f:
+                replies = json.load(f)
+            reply_list = replies.get('dm_auto_reply', [])
+            if not reply_list:
+                await self.client.send_message(user_id, "Şu anda otomatik yanıt verilemiyor.")
+                return
+            yanit = random.choice(reply_list)
+            await self.client.send_message(user_id, yanit)
+            logger.info(f"DM'ye otomatik yanıt gönderildi: {user_id}")
         except Exception as e:
-            logger.error(f"Error sending response: {str(e)}", exc_info=True)
-            # Hata durumunda basit bir mesaj göndermeyi dene
-            try:
-                await self.client.send_message(user_id, "Yanıt gönderirken bir sorun oluştu. Lütfen daha sonra tekrar deneyin.")
-            except:
-                pass
+            logger.error(f"DM otomatik yanıt hatası: {str(e)}")
+            await self.client.send_message(user_id, "Yanıt gönderilirken bir hata oluştu.")
+    
+    async def _send_response(self, user_id: int, message_text: str):
+        """
+        Kullanıcının mesajına özel yanıt gönderir. (Otomatik DM reply de dahil)
+        """
+        await self._send_auto_dm_reply(user_id)
     
     async def send_promotional_dm(self, user_id: int, promo_type: str = "service"):
         """Kullanıcıya tanıtım mesajı gönder."""
